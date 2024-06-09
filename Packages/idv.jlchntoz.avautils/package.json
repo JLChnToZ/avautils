@@ -1,0 +1,14 @@
+{
+  "name": "idv.jlchntoz.avautils",
+  "displayName": "Ava Utils",
+  "version": "0.1.0",
+  "unity": "2019.4",
+  "description": "A set of utilities for manually optimize/modify avatars within Unity.",
+  "license": "MIT",
+  "vrchatVersion": "2022.1.1",
+  "author": {
+    "name": "Jeremy Lam aka. Vistanz",
+    "email": "me@moka-rin.moe",
+    "url": "https://xtl.booth.pm"
+  }
+}
