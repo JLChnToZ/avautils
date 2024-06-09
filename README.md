@@ -26,6 +26,10 @@ This includes following tools:
     - Paste State Machine Behaviour Values: paste state machine behaviour properties
     - Paste State Machine Behaviour As New: create a new state machine behaviour at selected animation state/state machine with copied values
 
+# Installation
+
+You can install via [VCC](https://xtlcdn.github.io/vpm/).
+
 # LICENSE
 
 [MIT](LICENSE)
