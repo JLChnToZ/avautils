@@ -14,6 +14,8 @@ This includes following tools:
   - Reset Armature to T-Pose: Resets the armature to T-Pose.
   - Skinned Mesh Combiner: Combine (skinned/non-skinned) meshes into one, while conditionally select whether blendshapes/specified bones/polygons to be kept or merged or removed. Originally this is a standlone tool but I want to maintain it here in the future.
   - Animation Hierarchy Editor: You can batch modify animation driven object paths by selecting animation clips/animators/animator controllers, also supports records path changes on the fly. Note that this is a modified version that has been re-licensed, which originally released under public domain.
+  - Move Phys Bones: Move all PhysBone components under where a skinned mesh requires them, or "physbone" object if multiple or none of skinned meshes references it. Useful for auto suspends them when a clothes mesh hides.
+  - Remove Unused PhysBone Colliders: Cleans up PhyBone colliders which no longer has PhysBone references them.
 - Under context menu on components:
   - Skinned Mesh Renderer
     - Copy Bone References: Copy bone references to the skinned mesh renderer

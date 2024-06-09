@@ -11,10 +11,19 @@
     "allowUnsafeCode": false,
     "overrideReferences": true,
     "precompiledReferences": [
-        "JLChnToZ.CommonUtils.Dynamic.dll"
+        "JLChnToZ.CommonUtils.Dynamic.dll",
+        "VRCSDKBase.dll",
+        "VRCSDK3A.dll",
+        "VRC.Dynamics.dll"
     ],
     "autoReferenced": false,
     "defineConstraints": [],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.vrchat.avatars",
+            "expression": "",
+            "define": "VRC_SDK3_AVATARS"
+        }
+    ],
     "noEngineReferences": false
 }
