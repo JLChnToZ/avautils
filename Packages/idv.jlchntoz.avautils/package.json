@@ -6,6 +6,7 @@
   "description": "A set of utilities for manually optimize/modify avatars within Unity.",
   "license": "MIT",
   "vrchatVersion": "2022.1.1",
+  "vpmDependencies": {},
   "author": {
     "name": "Jeremy Lam aka. Vistanz",
     "email": "me@moka-rin.moe",
