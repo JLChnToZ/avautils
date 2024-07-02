@@ -10,34 +10,49 @@ using static UnityEngine.Object;
 namespace JLChnToZ.EditorExtensions {
     public sealed class ArmatureNormalizer {
         const string undoDescription = "Normalize Armature";
-        static readonly Quaternion identity = Quaternion.identity;
-        static readonly Quaternion downward = Quaternion.Euler(180, 0, 0);
-        static readonly Quaternion foot = Quaternion.Euler(120, 0, 0);
-        static readonly Quaternion forward = Quaternion.Euler(90, 0, 0);
-        static readonly Quaternion left = Quaternion.Euler(0, 0, 90);
-        static readonly Quaternion right = Quaternion.Euler(0, 0, -90);
-
-        // An array of "normalized" rotations that represents the T-Pose of a humanoid avatar.
-        // This should be friendly to IK libraries such as FinalIK.
-        static readonly Quaternion[] TPoseRotations = new[] {
-            identity, // Hips
-            downward, downward, downward, downward, foot, foot, // Legs
-            identity, identity, identity, identity, // Spine to Neck
-            left, right, left, right, left, right, // Arms
-            left, right, forward, forward, // Hand & Toes
-            identity, identity, identity, // Face
-            left, left, left, // Left Thumb
-            left, left, left, // Left Index
-            left, left, left, // Left Middle
-            left, left, left, // Left Ring
-            left, left, left, // Left Little
-            right, right, right, // Right Thumb
-            right, right, right, // Right Index
-            right, right, right, // Right Middle
-            right, right, right, // Right Ring
-            right, right, right, // Right Little
+        static readonly Dictionary<HumanBodyBones, (HumanBodyBones childBone, PointingDirection direction)> remapChildBones = new Dictionary<HumanBodyBones, (HumanBodyBones, PointingDirection)> {
+            [HumanBodyBones.LeftUpperLeg] = (HumanBodyBones.LeftLowerLeg, PointingDirection.Up),
+            [HumanBodyBones.LeftLowerLeg] = (HumanBodyBones.LeftFoot, PointingDirection.Up),
+            [HumanBodyBones.LeftFoot] = (HumanBodyBones.LeftToes, PointingDirection.Up),
+            [HumanBodyBones.RightUpperLeg] = (HumanBodyBones.RightLowerLeg, PointingDirection.Up),
+            [HumanBodyBones.RightLowerLeg] = (HumanBodyBones.RightFoot, PointingDirection.Up),
+            [HumanBodyBones.RightFoot] = (HumanBodyBones.RightToes, PointingDirection.Up),
+            [HumanBodyBones.LeftShoulder] = (HumanBodyBones.LeftUpperArm, PointingDirection.Left),
+            [HumanBodyBones.LeftUpperArm] = (HumanBodyBones.LeftLowerArm, PointingDirection.Left),
+            [HumanBodyBones.LeftLowerArm] = (HumanBodyBones.LeftHand, PointingDirection.Left),
+            [HumanBodyBones.LeftHand] = (HumanBodyBones.LastBone, PointingDirection.Left),
+            [HumanBodyBones.LeftThumbProximal] = (HumanBodyBones.LeftThumbIntermediate, PointingDirection.Left),
+            [HumanBodyBones.LeftThumbIntermediate] = (HumanBodyBones.LeftThumbDistal, PointingDirection.Left),
+            [HumanBodyBones.LeftThumbDistal] = (HumanBodyBones.LastBone, PointingDirection.Left),
+            [HumanBodyBones.LeftIndexProximal] = (HumanBodyBones.LeftIndexIntermediate, PointingDirection.Left),
+            [HumanBodyBones.LeftIndexIntermediate] = (HumanBodyBones.LeftIndexDistal, PointingDirection.Left),
+            [HumanBodyBones.LeftIndexDistal] = (HumanBodyBones.LastBone, PointingDirection.Left),
+            [HumanBodyBones.LeftMiddleProximal] = (HumanBodyBones.LeftMiddleIntermediate, PointingDirection.Left),
+            [HumanBodyBones.LeftMiddleIntermediate] = (HumanBodyBones.LeftMiddleDistal, PointingDirection.Left),
+            [HumanBodyBones.LeftMiddleDistal] = (HumanBodyBones.LastBone, PointingDirection.Left),
+            [HumanBodyBones.LeftRingProximal] = (HumanBodyBones.LeftRingIntermediate, PointingDirection.Left),
+            [HumanBodyBones.LeftRingIntermediate] = (HumanBodyBones.LeftRingDistal, PointingDirection.Left),
+            [HumanBodyBones.LeftRingDistal] = (HumanBodyBones.LastBone, PointingDirection.Left),
+            [HumanBodyBones.LeftLittleProximal] = (HumanBodyBones.LeftLittleIntermediate, PointingDirection.Left),
+            [HumanBodyBones.LeftLittleIntermediate] = (HumanBodyBones.LeftLittleDistal, PointingDirection.Left),
+            [HumanBodyBones.LeftLittleDistal] = (HumanBodyBones.LastBone, PointingDirection.Left),
+            [HumanBodyBones.RightShoulder] = (HumanBodyBones.RightUpperArm, PointingDirection.Right),
+            [HumanBodyBones.RightUpperArm] = (HumanBodyBones.RightLowerArm, PointingDirection.Right),
+            [HumanBodyBones.RightLowerArm] = (HumanBodyBones.RightHand, PointingDirection.Right),
+            [HumanBodyBones.RightHand] = (HumanBodyBones.LastBone, PointingDirection.Right),
+            [HumanBodyBones.RightThumbProximal] = (HumanBodyBones.RightThumbIntermediate, PointingDirection.Right),
+            [HumanBodyBones.RightThumbIntermediate] = (HumanBodyBones.RightThumbDistal, PointingDirection.Right),
+            [HumanBodyBones.RightThumbDistal] = (HumanBodyBones.LastBone, PointingDirection.Right),
+            [HumanBodyBones.RightIndexProximal] = (HumanBodyBones.RightIndexIntermediate, PointingDirection.Right),
+            [HumanBodyBones.RightIndexIntermediate] = (HumanBodyBones.RightIndexDistal, PointingDirection.Right),
+            [HumanBodyBones.RightIndexDistal] = (HumanBodyBones.LastBone, PointingDirection.Right),
+            [HumanBodyBones.RightMiddleProximal] = (HumanBodyBones.RightMiddleIntermediate, PointingDirection.Right),
+            [HumanBodyBones.RightMiddleIntermediate] = (HumanBodyBones.RightMiddleDistal, PointingDirection.Right),
+            [HumanBodyBones.RightMiddleDistal] = (HumanBodyBones.LastBone, PointingDirection.Right),
+            [HumanBodyBones.RightRingProximal] = (HumanBodyBones.RightRingIntermediate, PointingDirection.Right),
+            [HumanBodyBones.RightRingIntermediate] = (HumanBodyBones.RightRingDistal, PointingDirection.Right),
+            [HumanBodyBones.RightRingDistal] = (HumanBodyBones.LastBone, PointingDirection.Right),
         };
-
         readonly Dictionary<Transform, HumanBodyBones> boneToHumanBone = new Dictionary<Transform, HumanBodyBones>();
         readonly Dictionary<Transform, Matrix4x4> movedBones = new Dictionary<Transform, Matrix4x4>();
         readonly Dictionary<Transform, TranslateRotate> cachedPositions = new Dictionary<Transform, TranslateRotate>();
@@ -80,7 +95,7 @@ namespace JLChnToZ.EditorExtensions {
 
         #region Steps
         void Normalize() {
-            for (var bone = HumanBodyBones.LastBone - 1; bone >= HumanBodyBones.Hips; bone--) {
+            for (var bone = HumanBodyBones.Hips; bone < HumanBodyBones.LastBone; bone++) {
                 var transform = animator.GetBoneTransform(bone);
                 if (transform == null) continue;
                 bool canContainTwistBone = false;
@@ -104,11 +119,11 @@ namespace JLChnToZ.EditorExtensions {
                 if (undoable) Undo.RecordObject(transform, undoDescription);
                 var orgMatrix = transform.localToWorldMatrix;
                 var twistOrgMatrix = twistBone != null ? twistBone.localToWorldMatrix : Matrix4x4.identity;
-                transform.rotation = TPoseRotations[(int)bone] * root.rotation;
+                transform.rotation = GetAdjustedRotation(bone, transform);
                 movedBones[transform] = transform.worldToLocalMatrix * orgMatrix;
                 if (twistBone != null) {
                     if (undoable) Undo.RecordObject(twistBone, undoDescription);
-                    twistBone.localRotation = identity;
+                    twistBone.localRotation = Quaternion.identity;
                     movedBones[twistBone] = twistBone.worldToLocalMatrix * twistOrgMatrix;
                 }
                 RestoreCachedPositions();
@@ -148,6 +163,30 @@ namespace JLChnToZ.EditorExtensions {
                 if (undoable) Undo.RecordObject(skinnedMeshRenderer, undoDescription);
                 skinnedMeshRenderer.sharedMesh = clonedMesh;
             }
+        }
+
+        Quaternion GetAdjustedRotation(HumanBodyBones bone, Transform transform) {
+            if (!remapChildBones.TryGetValue(bone, out var info) ||
+                info.direction == PointingDirection.NoChange)
+                return root.rotation;
+            var refSrc = transform;
+            var refDist = info.childBone < HumanBodyBones.LastBone ?
+                animator.GetBoneTransform(info.childBone) :
+                null;
+            if (refDist == null) {
+                refSrc = animator.GetBoneTransform((HumanBodyBones)HumanTrait.GetParentBone((int)bone));
+                refDist = transform;
+            }
+            var up = (refDist.position - refSrc.position).normalized;
+            Vector3 forward;
+            switch (info.direction) {
+                case PointingDirection.Up: forward = -root.right; break;
+                case PointingDirection.Left: forward = root.forward; break;
+                case PointingDirection.Right: forward = -root.forward; break;
+                case PointingDirection.Forward: forward = root.up; break;
+                default: return root.rotation;
+            }
+            return Quaternion.LookRotation(Vector3.Cross(up, forward), up);
         }
 
         void FixCrossLeg() {
@@ -347,5 +386,13 @@ namespace JLChnToZ.EditorExtensions {
             } else
                 transform.SetPositionAndRotation(position, rotation);
         }
+    }
+
+    enum PointingDirection : byte {
+        NoChange,
+        Left,
+        Right,
+        Up,
+        Forward,
     }
 }
