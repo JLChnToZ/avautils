@@ -20,6 +20,7 @@ public class HumanBoneEditor : EditorTool {
     HumanBodyBones selectedBone = HumanBodyBones.LastBone;
     AnimationClip activeClip;
     float currentTime;
+    bool notAvailableMessageShown, invalidAvatarMessageShown;
 
     public override GUIContent toolbarIcon {
         get {
@@ -137,12 +138,31 @@ public class HumanBoneEditor : EditorTool {
         if (poseHandler != null) poseHandler.Dispose();
     }
 
+    public override void OnWillBeDeactivated() {
+        notAvailableMessageShown = false;
+        invalidAvatarMessageShown = false;
+    }
+
     public override void OnToolGUI(EditorWindow window) {
-        if (!TryGetCurrentRecordingAnimationClip(out activeClip, out currentTime)) return;
+        if (!TryGetCurrentRecordingAnimationClip(out activeClip, out currentTime)) {
+            if (!notAvailableMessageShown) {
+                window.ShowNotification(GetTempContent("Start recording in Animation Window to use this tool"));
+                notAvailableMessageShown = true;
+            }
+            return;
+        }
         var animator = target as Animator;
         if (animator == null || !animator.gameObject.activeInHierarchy) return;
         var avatar = animator.avatar;
-        if (avatar == null || !avatar.isValid || !avatar.isHuman) return;
+        if (avatar == null || !avatar.isValid || !avatar.isHuman) {
+            if (!invalidAvatarMessageShown) {
+                window.ShowNotification(GetTempContent("Avatar is not valid or not human"));
+                invalidAvatarMessageShown = true;
+            }
+            return;
+        }
+        notAvailableMessageShown = false;
+        invalidAvatarMessageShown = false;
         Init();
         var humanDescription = avatar.humanDescription;
         var _avatar = Wrap(avatar);
@@ -150,23 +170,28 @@ public class HumanBoneEditor : EditorTool {
         for (var boneEnum = (HumanBodyBones)0; boneEnum < HumanBodyBones.LastBone; boneEnum++) {
             var bone = animator.GetBoneTransform(boneEnum);
             if (bone == null) continue;
-            Handles.color = selectedBone == boneEnum ? Handles.selectedColor : Handles.centerColor;
-            if (Handles.Button(bone.position, Quaternion.identity, 0.01f, 0.01f, Handles.SphereHandleCap)) selectedBone = boneEnum;
-            if (selectedBone != boneEnum) continue;
-            int humanId = (int)boneEnum;
-            Handles.BeginGUI();
-            var screenPos = HandleUtility.WorldToGUIPoint(bone.position);
-            var label = GetTempContent(boneNames[humanId]);
-            var size = GUI.skin.label.CalcSize(label);
-            GUI.color = Handles.secondaryColor;
-            GUI.Label(new Rect(screenPos.x - size.x / 2, screenPos.y + size.y / 2, size.x, size.y), label);
-            Handles.EndGUI();
 #if UNITY_2021_3_OR_NEWER
             bone.GetPositionAndRotation(out var position, out var rotation);
 #else
             var position = bone.position;
             var rotation = bone.rotation;
 #endif
+            Handles.color = selectedBone == boneEnum ? Handles.selectedColor : Handles.centerColor;
+            if (selectedBone != boneEnum) {
+                float handleSize = HandleUtility.GetHandleSize(position) * 0.1f;
+                if (Handles.Button(position, Quaternion.identity, handleSize, handleSize, Handles.SphereHandleCap))
+                    selectedBone = boneEnum;
+                else
+                    continue;
+            }
+            int humanId = (int)boneEnum;
+            Handles.BeginGUI();
+            var screenPos = HandleUtility.WorldToGUIPoint(position);
+            var label = GetTempContent(boneNames[humanId]);
+            var size = GUI.skin.label.CalcSize(label);
+            GUI.color = Handles.centerColor;
+            GUI.Label(new Rect(screenPos.x - size.x / 2, screenPos.y - size.y / 2, size.x, size.y), label);
+            Handles.EndGUI();
             if (boneEnum == HumanBodyBones.Hips) {
                 HandleRootBone(animator, avatar, bone, position, rotation);
                 continue;
