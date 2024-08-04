@@ -8,6 +8,8 @@ using static JLChnToZ.CommonUtils.Dynamic.Limitless;
 [EditorTool(NAME, typeof(Animator))]
 public class HumanBoneEditor : EditorTool {
     const string NAME = "Human Bone Editor";
+    const string INVALID_AVATAR_MESSAGE = "Avatar is not valid or not humanoid";
+    const string UNDO_MESSAGE = "Edit Human Bone";
     static readonly dynamic AnimationRecording = Static("UnityEditorInternal.AnimationRecording, UnityEditor");
     static readonly dynamic AnimationWindow = Static("UnityEditor.AnimationWindow, UnityEditor");
     static string[] musclePropertyNames;
@@ -20,7 +22,8 @@ public class HumanBoneEditor : EditorTool {
     HumanBodyBones selectedBone = HumanBodyBones.LastBone;
     AnimationClip activeClip;
     float currentTime;
-    bool notAvailableMessageShown, invalidAvatarMessageShown;
+    bool invalidAvatarMessageShown;
+    bool isEditingAnimationClip;
 
     public override GUIContent toolbarIcon {
         get {
@@ -128,45 +131,32 @@ public class HumanBoneEditor : EditorTool {
         );
     }
 
-    float GetFloatValue(EditorCurveBinding binding, float defaultValue = 0) {
-        var curve = AnimationUtility.GetEditorCurve(activeClip, binding);
-        if (curve != null) return curve.Evaluate(currentTime);
-        return defaultValue;
-    }
-
     void OnDestroy() {
         if (poseHandler != null) poseHandler.Dispose();
     }
 
     public override void OnWillBeDeactivated() {
-        notAvailableMessageShown = false;
         invalidAvatarMessageShown = false;
     }
 
     public override void OnToolGUI(EditorWindow window) {
-        if (!TryGetCurrentRecordingAnimationClip(out activeClip, out currentTime)) {
-            if (!notAvailableMessageShown) {
-                window.ShowNotification(GetTempContent("Start recording in Animation Window to use this tool"));
-                notAvailableMessageShown = true;
-            }
-            return;
-        }
+        isEditingAnimationClip = TryGetCurrentRecordingAnimationClip(out activeClip, out currentTime);
         var animator = target as Animator;
         if (animator == null || !animator.gameObject.activeInHierarchy) return;
         var avatar = animator.avatar;
         if (avatar == null || !avatar.isValid || !avatar.isHuman) {
             if (!invalidAvatarMessageShown) {
-                window.ShowNotification(GetTempContent("Avatar is not valid or not human"));
+                window.ShowNotification(GetTempContent(INVALID_AVATAR_MESSAGE));
                 invalidAvatarMessageShown = true;
             }
             return;
         }
-        notAvailableMessageShown = false;
         invalidAvatarMessageShown = false;
         Init();
         var humanDescription = avatar.humanDescription;
         var _avatar = Wrap(avatar);
         Quaternion[] rotations = new Quaternion[3];
+        if (poseHandler == null) poseHandler = new HumanPoseHandler(avatar, animator.transform);
         for (var boneEnum = (HumanBodyBones)0; boneEnum < HumanBodyBones.LastBone; boneEnum++) {
             var bone = animator.GetBoneTransform(boneEnum);
             if (bone == null) continue;
@@ -193,7 +183,7 @@ public class HumanBoneEditor : EditorTool {
             GUI.Label(new Rect(screenPos.x - size.x / 2, screenPos.y - size.y / 2, size.x, size.y), label);
             Handles.EndGUI();
             if (boneEnum == HumanBodyBones.Hips) {
-                HandleRootBone(animator, avatar, bone, position, rotation);
+                HandleRootBone(bone, position, rotation);
                 continue;
             }
             var parentRotation = bone.parent.rotation;
@@ -207,7 +197,7 @@ public class HumanBoneEditor : EditorTool {
         }
     }
 
-    void HandleRootBone(Animator animator, Avatar avatar, Transform bone, Vector3 position, Quaternion rotation) {
+    void HandleRootBone(Transform bone, Vector3 position, Quaternion rotation) {
         var newPosition = position;
         var newRotation = rotation;
         bool positionChanged = false, rotationChanged = false;
@@ -220,8 +210,9 @@ public class HumanBoneEditor : EditorTool {
             rotationChanged = changeCheck.changed;
         }
         if (positionChanged || rotationChanged) {
-            if (poseHandler == null) poseHandler = new HumanPoseHandler(avatar, animator.transform);
+            if (!isEditingAnimationClip) Undo.RecordObject(bone, UNDO_MESSAGE);
             bone.SetPositionAndRotation(newPosition, newRotation);
+            if (!isEditingAnimationClip) return;
             poseHandler.GetHumanPose(ref pose);
             bone.SetPositionAndRotation(position, rotation);
             try {
@@ -260,7 +251,19 @@ public class HumanBoneEditor : EditorTool {
         }
         range = (max - min) * 0.5f;
         var binding = EditorCurveBinding.FloatCurve("", typeof(Animator), musclePropertyNames[muscle]);
-        float value = GetFloatValue(binding, 0);
+        float value = 0;
+        bool hasCurve = false;
+        if (isEditingAnimationClip) {
+            var curve = AnimationUtility.GetEditorCurve(activeClip, binding);
+            if (curve != null) {
+                value = curve.Evaluate(currentTime);
+                hasCurve = true;
+            }
+        }
+        if (!hasCurve) {
+            poseHandler.GetHumanPose(ref pose);
+            value = pose.muscles[muscle];
+        }
         float newValue = value;
         using (var changeCheck = new EditorGUI.ChangeCheckScope()) {
             Color color = default;
@@ -284,8 +287,19 @@ public class HumanBoneEditor : EditorTool {
             newValue = DoDiscHandle(color, position, q * vector, value * range) / range;
             if (!changeCheck.changed) return;
         }
-        using (var modifyKey = new KeyModificationScope(controlInterface))
-            AnimationRecording.AddKey(modifyKey.state, binding, typeof(float), value, newValue);
+        if (isEditingAnimationClip)
+            using (var modifyKey = new KeyModificationScope(controlInterface))
+                AnimationRecording.AddKey(modifyKey.state, binding, typeof(float), value, newValue);
+        else {
+            var animator = target as Animator;
+            for (var boneEnum = (HumanBodyBones)0; boneEnum < HumanBodyBones.LastBone; boneEnum++) {
+                var bone = animator.GetBoneTransform(boneEnum);
+                if (bone != null) Undo.RecordObject(bone, UNDO_MESSAGE);
+            }
+            pose.muscles[muscle] = newValue;
+            poseHandler.SetHumanPose(ref pose);
+            Undo.CollapseUndoOperations(Undo.GetCurrentGroup());
+        }
     }
 
     readonly struct KeyModificationScope : IDisposable {
