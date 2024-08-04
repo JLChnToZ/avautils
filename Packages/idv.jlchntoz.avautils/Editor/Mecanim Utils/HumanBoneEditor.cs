@@ -4,6 +4,7 @@ using UnityEditor;
 using UnityEditor.EditorTools;
 
 using static JLChnToZ.CommonUtils.Dynamic.Limitless;
+using System.Collections.Generic;
 
 [EditorTool(NAME, typeof(Animator))]
 public class HumanBoneEditor : EditorTool {
@@ -19,7 +20,7 @@ public class HumanBoneEditor : EditorTool {
     static dynamic animWindowState, controlInterface;
     HumanPoseHandler poseHandler;
     HumanPose pose;
-    HumanBodyBones selectedBone = HumanBodyBones.LastBone;
+    readonly HashSet<HumanBodyBones> selectedBones = new HashSet<HumanBodyBones>();
     AnimationClip activeClip;
     float currentTime;
     bool invalidAvatarMessageShown;
@@ -135,6 +136,10 @@ public class HumanBoneEditor : EditorTool {
         if (poseHandler != null) poseHandler.Dispose();
     }
 
+    public override void OnActivated() {
+        selectedBones.Clear();
+    }
+
     public override void OnWillBeDeactivated() {
         invalidAvatarMessageShown = false;
     }
@@ -166,14 +171,25 @@ public class HumanBoneEditor : EditorTool {
             var position = bone.position;
             var rotation = bone.rotation;
 #endif
-            Handles.color = selectedBone == boneEnum ? Handles.selectedColor : Handles.centerColor;
-            if (selectedBone != boneEnum) {
+            bool selected = selectedBones.Contains(boneEnum);
+            var evt = Event.current;
+            if (!selected || evt.shift) {
+                Handles.color = selected ? Handles.selectedColor : Handles.centerColor;
                 float handleSize = HandleUtility.GetHandleSize(position) * 0.1f;
-                if (Handles.Button(position, Quaternion.identity, handleSize, handleSize, Handles.SphereHandleCap))
-                    selectedBone = boneEnum;
-                else
-                    continue;
+                if (Handles.Button(position, Quaternion.identity, handleSize, handleSize, Handles.SphereHandleCap)) {
+                    if (evt.shift) {
+                        if (selectedBones.Add(boneEnum))
+                            selected = true;
+                        else if(selectedBones.Remove(boneEnum))
+                            selected = false;
+                    } else {
+                        selectedBones.Clear();
+                        selectedBones.Add(boneEnum);
+                        selected = true;
+                    }
+                }
             }
+            if (!selected) continue;
             int humanId = (int)boneEnum;
             Handles.BeginGUI();
             var screenPos = HandleUtility.WorldToGUIPoint(position);
@@ -252,7 +268,7 @@ public class HumanBoneEditor : EditorTool {
         range = (max - min) * 0.5f;
         var binding = EditorCurveBinding.FloatCurve("", typeof(Animator), musclePropertyNames[muscle]);
         float value = 0;
-        bool hasCurve = false;
+        bool hasCurve = false, poseFetched = false;
         if (isEditingAnimationClip) {
             var curve = AnimationUtility.GetEditorCurve(activeClip, binding);
             if (curve != null) {
@@ -263,6 +279,7 @@ public class HumanBoneEditor : EditorTool {
         if (!hasCurve) {
             poseHandler.GetHumanPose(ref pose);
             value = pose.muscles[muscle];
+            poseFetched = true;
         }
         float newValue = value;
         using (var changeCheck = new EditorGUI.ChangeCheckScope()) {
@@ -287,19 +304,51 @@ public class HumanBoneEditor : EditorTool {
             newValue = DoDiscHandle(color, position, q * vector, value * range) / range;
             if (!changeCheck.changed) return;
         }
-        if (isEditingAnimationClip)
-            using (var modifyKey = new KeyModificationScope(controlInterface))
-                AnimationRecording.AddKey(modifyKey.state, binding, typeof(float), value, newValue);
-        else {
+        if (isEditingAnimationClip) {
+            SetAnimationKey(binding, value, newValue);
+            if (selectedBones.Count > 1) {
+                foreach (var bone in selectedBones) {
+                    if (bone == (HumanBodyBones)humanId) continue;
+                    int otherMuscle = HumanTrait.MuscleFromBone((int)bone, axis);
+                    if (otherMuscle < 0) continue;
+                    var otherBinding = EditorCurveBinding.FloatCurve("", typeof(Animator), musclePropertyNames[otherMuscle]);
+                    var otherCurve = AnimationUtility.GetEditorCurve(activeClip, otherBinding);
+                    float otherValue;
+                    if (otherCurve != null)
+                        otherValue = otherCurve.Evaluate(currentTime);
+                    else {
+                        if (!poseFetched) {
+                            poseHandler.GetHumanPose(ref pose);
+                            poseFetched = true;
+                        }
+                        otherValue = pose.muscles[otherMuscle];
+                    }
+                    SetAnimationKey(otherBinding, otherValue, newValue);
+                }
+            }
+        } else {
             var animator = target as Animator;
             for (var boneEnum = (HumanBodyBones)0; boneEnum < HumanBodyBones.LastBone; boneEnum++) {
                 var bone = animator.GetBoneTransform(boneEnum);
                 if (bone != null) Undo.RecordObject(bone, UNDO_MESSAGE);
             }
             pose.muscles[muscle] = newValue;
+            if (selectedBones.Count > 1) {
+                foreach (var bone in selectedBones) {
+                    if (bone == (HumanBodyBones)humanId) continue;
+                    int otherMuscle = HumanTrait.MuscleFromBone((int)bone, axis);
+                    if (otherMuscle < 0) continue;
+                    pose.muscles[otherMuscle] = newValue;
+                }
+            }
             poseHandler.SetHumanPose(ref pose);
             Undo.CollapseUndoOperations(Undo.GetCurrentGroup());
         }
+    }
+
+    void SetAnimationKey(EditorCurveBinding binding, float value, float newValue) {
+        using (var modifyKey = new KeyModificationScope(controlInterface))
+            AnimationRecording.AddKey(modifyKey.state, binding, typeof(float), value, newValue);
     }
 
     readonly struct KeyModificationScope : IDisposable {
