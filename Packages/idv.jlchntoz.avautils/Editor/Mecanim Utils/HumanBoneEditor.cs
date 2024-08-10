@@ -1,10 +1,10 @@
 ﻿using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
 using UnityEditor.EditorTools;
 
 using static JLChnToZ.CommonUtils.Dynamic.Limitless;
-using System.Collections.Generic;
 
 [EditorTool(NAME, typeof(Animator))]
 public class HumanBoneEditor : EditorTool {

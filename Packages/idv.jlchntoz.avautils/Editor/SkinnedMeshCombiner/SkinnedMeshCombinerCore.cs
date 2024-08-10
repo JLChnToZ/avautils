@@ -56,6 +56,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         Matrix4x4 referenceTransform = Matrix4x4.identity;
         Material dummyMaterial;
         Transform dummyTransform;
+        UnwrapParam? unwrapParam;
 
         public static Mesh Combine(
             ICollection<(Renderer, CombineBlendshapeFlags[], CombineMeshFlags)> sources, 
@@ -63,7 +64,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             CombineMeshFlags mergeFlags = CombineMeshFlags.MergeSubMeshes,
             BlendShapeCopyMode blendShapeCopyMode = BlendShapeCopyMode.Vertices,
             IDictionary<Transform, Transform> boneRemap = null,
-            IDictionary<string, string> blendShapeRemap = null
+            IDictionary<string, string> blendShapeRemap = null,
+            UnwrapParam? unwrapParam = null
         ) {
             var disallowedFlags = CombineMeshFlags.None;
             if (!(destination is SkinnedMeshRenderer)) {
@@ -71,7 +73,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 disallowedFlags = CombineMeshFlags.CreateBoneForNonSkinnedMesh;
                 blendShapeCopyMode = BlendShapeCopyMode.None;
             }
-            using (var core = new SkinnedMeshCombinerCore(blendShapeCopyMode, boneRemap)) {
+            using (var core = new SkinnedMeshCombinerCore(blendShapeCopyMode, boneRemap, blendShapeRemap, unwrapParam)) {
                 #if UNITY_EDITOR
                 int group = -1;
                 if (!Application.isPlaying) {
@@ -100,11 +102,13 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         public SkinnedMeshCombinerCore(
             BlendShapeCopyMode blendShapeCopyMode = BlendShapeCopyMode.Vertices,
             IDictionary<Transform, Transform> boneRemap = null,
-            IDictionary<string, string> blendShapeRemap = null
+            IDictionary<string, string> blendShapeRemap = null,
+            UnwrapParam? unwrapParam = null
         ) {
             this.blendShapeCopyMode = blendShapeCopyMode;
             this.boneRemap = boneRemap;
             this.blendShapeRemap = blendShapeRemap;
+            this.unwrapParam = unwrapParam;
             vertices = new List<Vector3>();
             normals = new List<Vector3>();
             tangents = new List<Vector4>();
@@ -342,6 +346,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             foreach (var combines in combineInstances.Values) combines.Clear();
             combinedNewMesh.RecalculateBounds();
             combinedNewMesh.UploadMeshData(false);
+            if (unwrapParam.HasValue) Unwrapping.GenerateSecondaryUVSet(combinedNewMesh, unwrapParam.Value);
             if (destination is SkinnedMeshRenderer skinnedMeshRenderer) {
                 #if UNITY_EDITOR
                 if (!Application.isPlaying)

@@ -90,6 +90,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 onRemoveCallback = OnListRemove,
                 drawNoneElementCallback = OnListDrawNoneElement,
                 headerHeight = 0,
+                showDefaultBackground = false,
             };
         }
 
@@ -97,6 +98,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             EditorGUILayout.HelpBox(COMBINE_MESH_INFO, MessageType.Info);
             sourceListScrollPos = EditorGUILayout.BeginScrollView(sourceListScrollPos);
             sourceList.DoLayoutList();
+            GUILayout.FlexibleSpace();
             EditorGUILayout.EndScrollView();
             EditorGUILayout.BeginHorizontal();
             EditorGUI.BeginChangeCheck();

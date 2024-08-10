@@ -21,11 +21,8 @@
  */
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
 using UnityEditor;
-using UnityEditorInternal;
-using UnityObject = UnityEngine.Object;
 
 namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
     using JLChnToZ.CommonUtils;
@@ -70,6 +67,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                             blendshapeNameMap.Remove(blendshapeName);
                     }
                 }
+                GUILayout.FlexibleSpace();
             }
             using (new EditorGUILayout.HorizontalScope()) {
                 if (GUILayout.Button("Refresh", EditorStyles.miniButton, GUILayout.ExpandWidth(false))) RefreshBlendshapes();

@@ -136,6 +136,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                         drawStack.Push((null, depth + 1));
                 }
             }
+            GUILayout.FlexibleSpace();
             EditorGUILayout.EndScrollView();
             EditorGUILayout.BeginHorizontal();
             GUILayout.Label("Auto Select Bones...", GUILayout.ExpandWidth(false));

@@ -37,12 +37,14 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             "- Create extra bones for each non skinned mesh renderers\n" +
             "- Derefereneces unused bones (but not delete them)\n" +
             "- Bake (freeze state and then removes) selected blendshapes\n" +
+            "- Regenerate lightmap UVs if enabled\n" +
             "- Save the combined mesh to a file\n" +
             "- Deactivates combined mesh renderer sources";
         const string MESH_RENDERER_INFO = "The destination is an ordinary mesh renderer, all blend shapes and bones will enforced to combined and dereferenced.";
 
         public enum Tabs : byte {
             CombineMeshes,
+            LightmapUvs,
             CombineBones,
             BlendshapesRename,
             Cleanup,
@@ -62,6 +64,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         protected virtual void OnEnable() {
             if (tabNames == null) tabNames = Array.ConvertAll(Enum.GetNames(typeof(Tabs)), ObjectNames.NicifyVariableName);
             InitCombineMeshTab();
+            UnwrapParam.SetDefaults(out unwrapParam);
             switch (currentTab) {
                 case Tabs.CombineMeshes: RefreshCombineMeshOptions(); break;
                 case Tabs.CombineBones: RefreshBones(); break;
@@ -72,11 +75,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         }
 
         protected virtual void OnGUI() {
-            EditorGUILayout.BeginHorizontal();
             EditorGUI.BeginChangeCheck();
             currentTab = (Tabs)GUILayout.Toolbar((int)currentTab, tabNames, GUILayout.ExpandWidth(true));
             bool tabChanged = EditorGUI.EndChangeCheck();
-            EditorGUILayout.EndHorizontal();
             switch (currentTab) {
                 case Tabs.CombineMeshes: 
                     if (tabChanged) RefreshCombineMeshOptions();
@@ -89,6 +90,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 case Tabs.BlendshapesRename:
                     if (tabChanged) RefreshBlendshapes();
                     DrawBlendshapeTab();
+                    break;
+                case Tabs.LightmapUvs:
+                    DrawRegenerateUVTab();
                     break;
                 case Tabs.Cleanup:
                     if (tabChanged) UpdateSafeDeleteObjects();
@@ -112,6 +116,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 allBlendshapeNames.Clear();
                 blendshapeNameMap.Clear();
                 destination = null;
+                generateLightmapUVs = false;
+                UnwrapParam.SetDefaults(out unwrapParam);
                 currentTab = 0;
             }
             EditorGUILayout.EndHorizontal();
@@ -209,7 +215,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 if (bakeBlendShapeMap.TryGetValue(source, out var bakeBlendShapeToggles))
                     return (source, bakeBlendShapeToggles.blendShapeFlags, bakeBlendShapeToggles.combineMeshFlags);
                 return (source, null, CombineMeshFlags.None);
-            }).ToArray(), destination, mergeFlags, blendShapeCopyMode, boneReamp, blendshapeNameMap);
+            }).ToArray(), destination, mergeFlags, blendShapeCopyMode, boneReamp, blendshapeNameMap, generateLightmapUVs ? unwrapParam : null);
             if (mesh != null) {
                 mesh.Optimize();
                 if (destination is SkinnedMeshRenderer skinnedMeshRenderer)

@@ -62,6 +62,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     SafeDeleteObject(unusedTransform.gameObject);
                 EditorGUILayout.EndHorizontal();
             }
+            GUILayout.FlexibleSpace();
             EditorGUILayout.EndScrollView();
             autoCleanup = EditorGUILayout.ToggleLeft("Auto Cleanup On Combine", autoCleanup);
             EditorGUILayout.BeginHorizontal();
