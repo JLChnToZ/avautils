@@ -27,6 +27,9 @@ This includes following tools:
     - Copy State Machine Behaviour: Copy selected state machine behaviour properties
     - Paste State Machine Behaviour Values: paste state machine behaviour properties
     - Paste State Machine Behaviour As New: create a new state machine behaviour at selected animation state/state machine with copied values
+- Under context menu on assets in project view:
+  - Any Assets (Except Scene)
+    - Find Ghosted Sub Assets: A tool for cleaning up "ghosted" sub assets inside an asset, such as "deleted" animation state in animation controller (but still exists and holding unused references).
 - Under Toolbar in Scene View
   - Human Bone Editor: Rotates humanord bones in scene view when editing humanoid mechanim animation clips.
 
