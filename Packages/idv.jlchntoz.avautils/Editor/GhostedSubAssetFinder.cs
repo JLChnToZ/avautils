@@ -1,7 +1,7 @@
 using System;
+using System.Linq;
 using System.Collections;
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
 using UnityEngine;
 using UnityEditor;
 using UnityObject = UnityEngine.Object;
@@ -11,9 +11,9 @@ namespace JLChnToZ.CommonUtils {
         const string MENU_PATH = "Assets/Find Ghosted Sub Assets";
         static readonly GUIContent tempContent = new();
         static GUILayoutOption[] noExpandWidth, expandWidth;
-        readonly HashSet<Dependency> listed = new();
+        readonly HashSet<DependencyNode> listed = new();
         readonly Dictionary<UnityObject, bool> expanded = new();
-        [NonSerialized] Dependency[] dependencies;
+        [NonSerialized] DependencyNode[] groups;
         [SerializeField] string mainAssetPath;
         [SerializeField] Vector2 scrollPosition;
         [SerializeField] bool skipConfirm;
@@ -63,27 +63,26 @@ namespace JLChnToZ.CommonUtils {
         }
 
         void OnEnable() {
-            noExpandWidth ??= new [] {
+            noExpandWidth ??= new[] {
                 GUILayout.ExpandWidth(false),
                 GUILayout.Height(EditorGUIUtility.singleLineHeight),
             };
-            expandWidth ??= new [] {
+            expandWidth ??= new[] {
                 GUILayout.ExpandWidth(true),
                 GUILayout.Height(EditorGUIUtility.singleLineHeight),
             };
-            if (!string.IsNullOrEmpty(mainAssetPath) && dependencies == null)
+            if (!string.IsNullOrEmpty(mainAssetPath) && groups == null)
                 Refresh();
         }
 
         void Refresh() {
-            dependencies = Dependency.Scan(mainAssetPath);
-            if (dependencies == null) {
+            groups = DependencyNode.Scan(mainAssetPath);
+            if (groups == null) {
                 Close();
                 return;
             }
             var title = titleContent;
-            var depds = dependencies[0];
-            titleContent.text = $"{ObjectNames.GetInspectorTitle(depds.asset)} - Ghosted Sub Assets Finder";
+            titleContent.text = $"{ObjectNames.GetInspectorTitle(groups[0].asset)} - Ghosted Sub Assets Finder";
             titleContent = title;
         }
 
@@ -91,7 +90,7 @@ namespace JLChnToZ.CommonUtils {
             bool shouldRefresh = false;
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar, Array.Empty<GUILayoutOption>())) {
                 if (GUILayout.Button("Refresh", EditorStyles.toolbarButton, noExpandWidth)) shouldRefresh = true;
-                GUILayout.Label($"Dependency Groups: {dependencies?.Length ?? 0}", EditorStyles.label, noExpandWidth);
+                GUILayout.Label($"Dependency Groups: {groups?.Length ?? 0}", EditorStyles.label, noExpandWidth);
                 GUILayout.FlexibleSpace();
                 if (GUILayout.Button("Clean All", EditorStyles.toolbarButton, noExpandWidth))
                     shouldRefresh |= ConfirmAndCleanAll();
@@ -99,18 +98,12 @@ namespace JLChnToZ.CommonUtils {
             }
             using (var scroll = new EditorGUILayout.ScrollViewScope(scrollPosition, Array.Empty<GUILayoutOption>())) {
                 scrollPosition = scroll.scrollPosition;
-                if (dependencies != null) {
-                    foreach (var root in dependencies) {
-                        if (!DrawEntry(root, root.Count > 0, 0, ref shouldRefresh)) continue;
-                        for (var deepDepds = root.DeepDependencies; deepDepds.MoveNext(); )
-                            if (!DrawEntry(
-                                deepDepds.Current,
-                                deepDepds.IsEnteringChildren,
-                                deepDepds.Depth * 16,
-                                ref shouldRefresh
-                            )) deepDepds.CancelYieldChildrenOnNext();
-                    }
-                }
+                if (groups != null)
+                    foreach (var root in groups)
+                        if (DrawEntry(root, !root.IsEmpty, 0, ref shouldRefresh))
+                            for (var e = root.GetEnumerator(); e.MoveNext();)
+                                if (!DrawEntry(e.Current, e.IsEnteringChildren, e.Depth * 16F, ref shouldRefresh))
+                                    e.CancelYieldChildrenOnNext();
                 GUILayout.FlexibleSpace();
             }
             if (shouldRefresh) {
@@ -119,15 +112,15 @@ namespace JLChnToZ.CommonUtils {
             }
         }
 
-        bool DrawEntry(Dependency depd, bool expandable, float indentOffset, ref bool shouldRefresh) {
-            bool isHidden = (depd.asset.hideFlags & (HideFlags.HideInHierarchy | HideFlags.HideInInspector)) != HideFlags.None;
+        bool DrawEntry(DependencyNode node, bool expandable, float indentOffset, ref bool shouldRefresh) {
+            bool isHidden = (node.asset.hideFlags & (HideFlags.HideInHierarchy | HideFlags.HideInInspector)) != HideFlags.None;
             bool isExpanded = false;
             using (new EditorGUILayout.HorizontalScope(Array.Empty<GUILayoutOption>())) {
-                TempContent(ObjectNames.GetInspectorTitle(depd.asset), GetThumbnail(depd.asset), depd.asset.name);
+                TempContent(ObjectNames.GetInspectorTitle(node.asset), GetThumbnail(node.asset), node.asset.name);
                 var color = GUI.color;
                 if (isHidden) GUI.color = color * 0.75F;
                 if (expandable) {
-                    expanded.TryGetValue(depd.asset, out isExpanded);
+                    expanded.TryGetValue(node.asset, out isExpanded);
                     GUILayout.Space(indentOffset);
                     using (var changeCheck = new EditorGUI.ChangeCheckScope()) {
                         isExpanded = GUI.Toggle(GUILayoutUtility.GetRect(
@@ -136,7 +129,7 @@ namespace JLChnToZ.CommonUtils {
                             EditorGUIUtility.singleLineHeight,
                             EditorStyles.foldout
                         ), isExpanded, tempContent, EditorStyles.foldout);
-                        if (changeCheck.changed) expanded[depd.asset] = isExpanded;
+                        if (changeCheck.changed) expanded[node.asset] = isExpanded;
                     }
                 } else {
                     indentOffset += 13;
@@ -151,26 +144,26 @@ namespace JLChnToZ.CommonUtils {
                 GUI.color = color;
                 GUILayout.FlexibleSpace();
                 if (GUILayout.Button(ImageContent("scenepicking_pickable_hover", "Locate"), EditorStyles.iconButton, noExpandWidth))
-                    EditorGUIUtility.PingObject(depd.asset);
+                    EditorGUIUtility.PingObject(node.asset);
                 if (GUILayout.Button(ImageContent("Selectable Icon", "Select"), EditorStyles.iconButton, noExpandWidth))
-                    Selection.activeObject = depd.asset;
+                    Selection.activeObject = node.asset;
                 if (GUILayout.Button(ImageContent("TreeEditor.Trash", "Delete"), EditorStyles.iconButton, noExpandWidth))
-                    shouldRefresh |= Event.current.shift ? ConfirmAndCleanDeep(depd) : ConfirmAndCleanSingle(depd);
+                    shouldRefresh |= Event.current.shift ? ConfirmAndCleanDeep(node) : ConfirmAndCleanSingle(node);
             }
             return expandable && isExpanded;
         }
 
-        bool ConfirmAndCleanSingle(Dependency depd) => (skipConfirm || EditorUtility.DisplayDialog(
+        bool ConfirmAndCleanSingle(DependencyNode node) => (skipConfirm || EditorUtility.DisplayDialog(
             "Delete Sub Asset",
-            $"Are you sure you want to delete {depd.asset.name}?",
+            $"Are you sure you want to delete {node.asset.name}?",
             "Yes", "No"
-        )) && Cleanup(depd, false);
+        )) && Cleanup(node, false);
 
-        bool ConfirmAndCleanDeep(Dependency depd) => (skipConfirm || EditorUtility.DisplayDialog(
+        bool ConfirmAndCleanDeep(DependencyNode node) => (skipConfirm || EditorUtility.DisplayDialog(
             "Delete All Descendants",
-            $"Are you sure you want to delete all descendants of {depd.asset.name}?",
+            $"Are you sure you want to delete all descendants of {node.asset.name}?",
             "Yes", "No"
-        )) && Cleanup(depd, true);
+        )) && Cleanup(node, true);
 
         bool ConfirmAndCleanAll() => (skipConfirm || EditorUtility.DisplayDialog(
             "Delete All Ghosted Sub Assets",
@@ -178,119 +171,120 @@ namespace JLChnToZ.CommonUtils {
             "Yes", "No"
         )) && Cleanup(null, true);
 
-        bool Cleanup(Dependency depd, bool deepClean) {
+        bool Cleanup(DependencyNode node, bool deepClean) {
             if (deepClean) {
                 listed.Clear();
-                if (dependencies != null) {
-                    for (int i = depd == null ? 1 : 0; i < dependencies.Length; i++) {
-                        var currentDepd = dependencies[i];
-                        if (currentDepd.Equals(depd)) continue;
+                if (groups != null) {
+                    for (int i = node ? 1 : 0; i < groups.Length; i++) {
+                        var currentDepd = groups[i];
+                        if (currentDepd.Equals(node)) continue;
                         listed.Add(currentDepd);
-                        for (var deepDepds = currentDepd.DeepDependencies; deepDepds.MoveNext(); ) {
-                            var otherDepd = deepDepds.Current;
-                            if (!otherDepd.Equals(depd) && !listed.Add(otherDepd))
-                                deepDepds.CancelYieldChildrenOnNext();
+                        for (var e = currentDepd.GetEnumerator(); e.MoveNext();) {
+                            var otherDepd = e.Current;
+                            if (!otherDepd.Equals(node) && !listed.Add(otherDepd))
+                                e.CancelYieldChildrenOnNext();
                         }
                     }
-                    if (depd != null) {
-                        for (var deepDepds = depd.DeepDependencies; deepDepds.MoveNext(); ) {
-                            var deepDepd = deepDepds.Current;
-                            if (listed.Add(deepDepd))
-                                AssetDatabase.RemoveObjectFromAsset(deepDepd.asset);
+                    if (node) {
+                        for (var e = node.GetEnumerator(); e.MoveNext();) {
+                            var toDelete = e.Current;
+                            if (listed.Add(toDelete))
+                                AssetDatabase.RemoveObjectFromAsset(toDelete.asset);
                         }
                     } else {
-                        listed.ExceptWith(dependencies[0].DeepDependencies);
-                        foreach (var deepDepd in listed)
-                            AssetDatabase.RemoveObjectFromAsset(deepDepd.asset);
+                        listed.Remove(groups[0]);
+                        listed.ExceptWith(groups[0]);
+                        foreach (var toDelete in listed)
+                            AssetDatabase.RemoveObjectFromAsset(toDelete.asset);
                     }
                     listed.Clear();
                 }
             }
-            if (depd != null) AssetDatabase.RemoveObjectFromAsset(depd.asset);
+            if (node) AssetDatabase.RemoveObjectFromAsset(node.asset);
             return true;
         }
 
-        class Dependency : ICollection<Dependency>, IReadOnlyCollection<Dependency>, IEquatable<Dependency> {
+        sealed class DependencyNode : IEnumerable<DependencyNode>, IEquatable<DependencyNode> {
             public readonly UnityObject asset;
-            HashSet<Dependency> dependencies;
+            DependencyNode[] dependencies = Array.Empty<DependencyNode>();
 
-            public DeepEnumerator DeepDependencies => new(this);
+            public bool IsEmpty => dependencies.Length == 0;
 
-            public int Count => dependencies != null ? dependencies.Count : 0;
+            static bool NotNull(UnityObject asset) => asset;
 
-            bool ICollection<Dependency>.IsReadOnly => true;
+            static DependencyNode FromMapping(Dictionary<UnityObject, DependencyNode> map, UnityObject asset) {
+                if (!map.TryGetValue(asset, out var node)) map[asset] = node = new(asset);
+                return node;
+            }
 
-            public static Dependency[] Scan(string assetPath) {
+            public static DependencyNode[] Scan(string assetPath) {
                 if (assetPath.EndsWith(".unity", StringComparison.OrdinalIgnoreCase))
-                    return Array.Empty<Dependency>();
+                    return Array.Empty<DependencyNode>();
                 var assets = AssetDatabase.LoadAllAssetsAtPath(assetPath);
-                if (assets == null || assets.Length == 0)
-                    return Array.Empty<Dependency>();
-                var assetSources = new HashSet<UnityObject>(assets);
-                Dependency mainDepd = null;
-                var mapping = new Dictionary<UnityObject, Dependency>();
-                foreach (var asset in assetSources) {
-                    if (!asset) continue;
-                    var depd = new Dependency(asset);
-                    mapping[asset] = depd;
-                    if (mainDepd == null && AssetDatabase.IsMainAsset(asset))
-                        mainDepd = depd;
+                if (assets == null) return Array.Empty<DependencyNode>();
+                var assetSet = new HashSet<UnityObject>(assets.Where(NotNull));
+                if (assetSet.Count == 0) return Array.Empty<DependencyNode>();
+                var roots = new HashSet<UnityObject>(assetSet);
+                var obj2RawDepds = new Dictionary<UnityObject, HashSet<UnityObject>>(assetSet.Count);
+                UnityObject mainAsset = null;
+                foreach (var asset in assetSet) {
+                    if (!mainAsset && AssetDatabase.IsMainAsset(asset))
+                        mainAsset = asset;
+                    using var so = new SerializedObject(asset);
+                    for (var sp = so.GetIterator(); sp.Next(true);) {
+                        if (sp.propertyType != SerializedPropertyType.ObjectReference) continue;
+                        var other = sp.objectReferenceValue;
+                        if (!other || other == asset || !assetSet.Contains(other))
+                            continue;
+                        if (!obj2RawDepds.TryGetValue(asset, out var rawDepds))
+                            obj2RawDepds[asset] = rawDepds = new();
+                        rawDepds.Add(other);
+                        roots.Remove(other);
+                    }
                 }
-                var roots = new HashSet<Dependency>(mapping.Values);
-                if (mainDepd != null) {
-                    mainDepd.GatherDepdencies(mapping, roots);
-                    assetSources.Remove(mainDepd.asset);
-                    roots.Remove(mainDepd);
+                var obj2Nodes = new Dictionary<UnityObject, DependencyNode>(obj2RawDepds.Count);
+                foreach (var asset in assetSet) {
+                    var node = FromMapping(obj2Nodes, asset);
+                    if (!obj2RawDepds.TryGetValue(asset, out var rawDepds))
+                        continue;
+                    var dependencies = new DependencyNode[rawDepds.Count];
+                    node.dependencies = dependencies;
+                    int i = 0;
+                    foreach (var other in rawDepds)
+                        dependencies[i++] = FromMapping(obj2Nodes, other);
                 }
-                foreach (var asset in assetSources)
-                    if (asset && mapping.TryGetValue(asset, out var depd))
-                        depd.GatherDepdencies(mapping, roots);
-                var result = new List<Dependency>();
-                if (mainDepd != null) result.Add(mainDepd);
-                result.AddRange(roots);
+                var result = new List<DependencyNode>(roots.Count);
+                if (mainAsset) {
+                    roots.Remove(mainAsset);
+                    result.Add(obj2Nodes[mainAsset]);
+                }
+                foreach (var root in roots)
+                    if (obj2Nodes.TryGetValue(root, out var node))
+                        result.Add(node);
                 return result.ToArray();
             }
 
-            Dependency(UnityObject asset) => this.asset = asset;
+            DependencyNode(UnityObject asset) => this.asset = asset;
 
-            void GatherDepdencies(Dictionary<UnityObject, Dependency> mapping, HashSet<Dependency> roots) {
-                using var so = new SerializedObject(asset);
-                for (var sp = so.GetIterator(); sp.Next(true); ) {
-                    if (sp.propertyType != SerializedPropertyType.ObjectReference) continue;
-                    var other = sp.objectReferenceValue;
-                    if (other && other != asset && mapping.TryGetValue(other, out var otherDepd)) {
-                        dependencies ??= new HashSet<Dependency>();
-                        dependencies.Add(otherDepd);
-                        roots.Remove(otherDepd);
-                    }
-                }
-            }
+            public Enumerator GetEnumerator() => new(this);
 
-            public bool Contains(Dependency item) => dependencies != null && dependencies.Contains(item);
-
-            public void CopyTo(Dependency[] array, int arrayIndex) => dependencies?.CopyTo(array, arrayIndex);
-
-            public Enumerator GetEnumerator() => new(dependencies);
-
-            IEnumerator<Dependency> IEnumerable<Dependency>.GetEnumerator() => GetEnumerator();
+            IEnumerator<DependencyNode> IEnumerable<DependencyNode>.GetEnumerator() => GetEnumerator();
 
             IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-            void ICollection<Dependency>.Add(Dependency item) => throw new NotSupportedException();
+            public bool Equals(DependencyNode other) => other != null && asset == other.asset;
 
-            void ICollection<Dependency>.Clear() => throw new NotSupportedException();
-
-            bool ICollection<Dependency>.Remove(Dependency item) => throw new NotSupportedException();
-
-            public bool Equals(Dependency other) => other != null && asset == other.asset;
-
-            public override bool Equals(object obj) => Equals(obj as Dependency);
+            public override bool Equals(object obj) => obj is DependencyNode other && Equals(other);
 
             public override int GetHashCode() => asset ? asset.GetHashCode() : 0;
 
-            public struct DeepEnumerator : IEnumerable<Dependency>, IEnumerator<Dependency> {
-                readonly Stack<(Dependency parent, HashSet<Dependency>.Enumerator enumerator)> stack;
-                Dependency current;
+            public static bool operator true(DependencyNode node) => node != null && node.asset;
+
+            public static bool operator false(DependencyNode node) => node == null || !node.asset;
+
+            public struct Enumerator : IEnumerator<DependencyNode> {
+                readonly Stack<(DependencyNode parent, int index)> stack;
+                DependencyNode current;
 
                 public readonly int Depth {
                     get {
@@ -302,11 +296,11 @@ namespace JLChnToZ.CommonUtils {
                 public readonly bool IsEnteringChildren =>
                     stack.TryPeek(out var entry) && entry.parent.Equals(current);
 
-                public readonly Dependency Current => current;
+                public readonly DependencyNode Current => current;
 
                 readonly object IEnumerator.Current => current;
 
-                public DeepEnumerator(Dependency root) {
+                public Enumerator(DependencyNode root) {
                     stack = new();
                     current = root;
                     YieldChildrenOnNext();
@@ -314,78 +308,39 @@ namespace JLChnToZ.CommonUtils {
 
                 public bool MoveNext() {
                     while (stack.TryPop(out var entry)) {
-                        current = null;
-                        ref var enumerator = ref entry.enumerator;
-                        if (!enumerator.MoveNext()) {
-                            enumerator.Dispose();
+                        current = default;
+                        var dependencies = entry.parent.dependencies;
+                        ref var index = ref entry.index;
+                        if (++index >= dependencies.Length)
                             continue;
-                        }
                         stack.Push(entry);
-                        current = enumerator.Current;
-                        if (current == null) continue;
-                        bool isCircular = false;
-                        foreach (var (parent, _) in stack)
-                            if (parent.Equals(current)) {
-                                isCircular = true;
-                                break;
-                            }
-                        if (isCircular) continue;
-                        YieldChildrenOnNext();
-                        return true;
+                        if (current = dependencies[index]) {
+                            foreach (var (parent, _) in stack)
+                                if (parent.Equals(current))
+                                    goto SkipCurrent;
+                            YieldChildrenOnNext();
+                            return true;
+                        }
+                        SkipCurrent:;
                     }
                     return false;
                 }
 
                 readonly void YieldChildrenOnNext() {
-                    ref var dependencies = ref current.dependencies;
-                    if (dependencies != null && dependencies.Count > 0)
-                        stack.Push((current, dependencies.GetEnumerator()));
+                    if (current.dependencies.Length > 0) stack.Push((current, -1));
                 }
 
                 public readonly bool CancelYieldChildrenOnNext() {
                     if (stack.TryPeek(out var entry) && entry.parent.Equals(current)) {
-                        entry.enumerator.Dispose();
                         stack.Pop();
                         return true;
                     }
                     return false;
                 }
 
-                readonly void IEnumerator.Reset() {}
+                readonly void IEnumerator.Reset() { }
 
-                public readonly void Dispose() {
-                    while (stack.TryPop(out var entry))
-                        entry.enumerator.Dispose();
-                }
-
-                [MethodImpl(MethodImplOptions.AggressiveInlining)]
-                public readonly DeepEnumerator GetEnumerator() => this;
-
-                readonly IEnumerator<Dependency> IEnumerable<Dependency>.GetEnumerator() => this;
-
-                readonly IEnumerator IEnumerable.GetEnumerator() => this;
-            }
-
-            public struct Enumerator : IEnumerator<Dependency> {
-                readonly bool vaild;
-                HashSet<Dependency>.Enumerator enumerator;
-
-                public readonly Dependency Current => enumerator.Current;
-
-                readonly object IEnumerator.Current => enumerator.Current;
-
-                public Enumerator(HashSet<Dependency> hashset) {
-                    vaild = hashset != null;
-                    enumerator = vaild ? hashset.GetEnumerator() : default;
-                }
-
-                public bool MoveNext() => vaild && enumerator.MoveNext();
-
-                readonly void IEnumerator.Reset() {}
-
-                public void Dispose() {
-                    if (vaild) enumerator.Dispose();
-                }
+                public readonly void Dispose() => stack.Clear();
             }
         }
     }
