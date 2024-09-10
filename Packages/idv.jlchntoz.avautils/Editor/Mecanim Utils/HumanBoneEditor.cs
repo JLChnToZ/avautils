@@ -113,6 +113,26 @@ public class HumanBoneEditor : EditorTool {
         return false;
     }
 
+    static bool TryGetMuscleLimits(HumanDescription humanDescription, int humanId, int axis, out int muscle, out float min, out float max) {
+        muscle = HumanTrait.MuscleFromBone(humanId, axis);
+        if (muscle < 0) {
+            min = max = 0;
+            return false;
+        }
+        var humanLimits = humanDescription.human;
+        if (humanId < humanLimits.Length) {
+            var limit = humanLimits[humanId].limit;
+            if (!limit.useDefaultValues) {
+                min = limit.min[axis];
+                max = limit.max[axis];
+                return true;
+            }
+        }
+        min = HumanTrait.GetMuscleDefaultMin(muscle);
+        max = HumanTrait.GetMuscleDefaultMax(muscle);
+        return true;
+    }
+
     static void AddRootFloatKey(dynamic state, string property, float value) => AnimationRecording.AddKey(
         state, EditorCurveBinding.FloatCurve("", typeof(Animator), property), typeof(float), value, value
     );
@@ -252,20 +272,8 @@ public class HumanBoneEditor : EditorTool {
     }
 
     void HandleMuscle(HumanDescription humanDescription, int humanId, int axis, Vector3 position, Quaternion parentRotation, Quaternion rotation, dynamic avatar, Vector3 sign) {
-        int muscle = HumanTrait.MuscleFromBone(humanId, axis);
-        if (muscle < 0) return;
-        float min, max, range;
-        var humanLimits = humanDescription.human;
-        if (humanId >= humanLimits.Length) return;
-        var limit = humanLimits[humanId].limit;
-        if (limit.useDefaultValues) {
-            min = HumanTrait.GetMuscleDefaultMin(muscle);
-            max = HumanTrait.GetMuscleDefaultMax(muscle);
-        } else {
-            min = limit.min[axis];
-            max = limit.max[axis];
-        }
-        range = (max - min) * 0.5f;
+        if (!TryGetMuscleLimits(humanDescription, humanId, axis, out var muscle, out var min, out var max)) return;
+        var range = (max - min) * 0.5f;
         var binding = EditorCurveBinding.FloatCurve("", typeof(Animator), musclePropertyNames[muscle]);
         float value = 0;
         bool hasCurve = false, poseFetched = false;
