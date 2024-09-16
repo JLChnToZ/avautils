@@ -238,7 +238,7 @@ public class HumanBoneEditor : EditorTool {
                 continue;
             }
             var parentRotation = bone.parent.rotation;
-            var sign = (Vector3)_avatar.GetLimitSign(humanId);
+            Vector3 sign = _avatar.GetLimitSign(humanId);
             for (int axis = 0; axis < 3; axis++)
                 try {
                     HandleMuscle(humanDescription, humanId, axis, position, parentRotation, rotation, _avatar, sign);
@@ -263,6 +263,8 @@ public class HumanBoneEditor : EditorTool {
         if (positionChanged || rotationChanged) {
             if (!isEditingAnimationClip) Undo.RecordObject(bone, UNDO_MESSAGE);
             bone.SetPositionAndRotation(newPosition, newRotation);
+            pose.bodyPosition = newPosition - position + pose.bodyPosition;
+            pose.bodyRotation = newRotation * Quaternion.Inverse(rotation) * pose.bodyRotation;
             if (!isEditingAnimationClip) return;
             bone.SetPositionAndRotation(position, rotation);
             try {
