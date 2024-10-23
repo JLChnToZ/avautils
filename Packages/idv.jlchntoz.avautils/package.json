@@ -1,7 +1,7 @@
 {
   "name": "idv.jlchntoz.avautils",
   "displayName": "Ava Utils",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "unity": "2022.1",
   "description": "A set of utilities for manually optimize/modify avatars within Unity.",
   "license": "MIT",
