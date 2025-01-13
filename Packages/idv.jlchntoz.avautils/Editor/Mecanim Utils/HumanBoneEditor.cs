@@ -20,6 +20,7 @@ public class HumanBoneEditor : EditorTool {
     static dynamic animWindowState, controlInterface;
     HumanPoseHandler poseHandler;
     HumanPose pose;
+    Transform poseRoot;
     readonly HashSet<HumanBodyBones> selectedBones = new HashSet<HumanBodyBones>();
     Animator activeAnimator;
     AnimationClip activeClip;
@@ -164,11 +165,28 @@ public class HumanBoneEditor : EditorTool {
         selectedBones.Clear();
         poseHandler?.Dispose();
         poseHandler = null;
+        poseRoot = null;
         activeAnimator = null;
         Undo.undoRedoPerformed -= Repose;
     }
 
-    void Repose() => poseHandler?.GetHumanPose(ref pose);
+    void Repose() {
+        if (poseHandler == null && activeAnimator) {
+            poseRoot = activeAnimator.transform;
+            poseHandler = new HumanPoseHandler(activeAnimator.avatar, poseRoot);
+        }
+        if (!poseRoot) return;
+        poseRoot.GetLocalPositionAndRotation(out var t, out var r);
+        var s = poseRoot.localScale;
+        var parent = poseRoot.parent;
+        if (parent) poseRoot.SetParent(null, false);
+        poseRoot.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
+        poseRoot.localScale = Vector3.one;
+        poseHandler.GetHumanPose(ref pose);
+        if (parent) poseRoot.SetParent(parent, false);
+        poseRoot.SetLocalPositionAndRotation(t, r);
+        poseRoot.localScale = s;
+    }
 
     public override void OnToolGUI(EditorWindow window) {
         isEditingAnimationClip = TryGetCurrentRecordingAnimationClip(out activeClip, out currentTime);
@@ -194,18 +212,8 @@ public class HumanBoneEditor : EditorTool {
         if (activeAnimator != animator || poseHandler == null) {
             activeAnimator = animator;
             poseHandler?.Dispose();
-            var animT = animator.transform;
-            poseHandler = new HumanPoseHandler(avatar, animT);
-            animT.GetLocalPositionAndRotation(out var localT, out var localR);
-            var localS = animT.localScale;
-            var parent = animT.parent;
-            if (parent) animT.SetParent(null, false);
-            animT.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
-            animT.localScale = Vector3.one;
-            poseHandler.GetHumanPose(ref pose);
-            if (parent) animT.SetParent(parent, false);
-            animT.SetLocalPositionAndRotation(localT, localR);
-            animT.localScale = localS;
+            poseHandler = null;
+            Repose();
         }
         for (var boneEnum = (HumanBodyBones)0; boneEnum < HumanBodyBones.LastBone; boneEnum++) {
             var bone = animator.GetBoneTransform(boneEnum);
