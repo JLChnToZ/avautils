@@ -194,18 +194,23 @@ public class HumanBoneEditor : EditorTool {
         if (activeAnimator != animator || poseHandler == null) {
             activeAnimator = animator;
             poseHandler?.Dispose();
-            poseHandler = new HumanPoseHandler(avatar, animator.transform);
+            var animT = animator.transform;
+            poseHandler = new HumanPoseHandler(avatar, animT);
+            animT.GetLocalPositionAndRotation(out var localT, out var localR);
+            var localS = animT.localScale;
+            var parent = animT.parent;
+            if (parent) animT.SetParent(null, false);
+            animT.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
+            animT.localScale = Vector3.one;
             poseHandler.GetHumanPose(ref pose);
+            if (parent) animT.SetParent(parent, false);
+            animT.SetLocalPositionAndRotation(localT, localR);
+            animT.localScale = localS;
         }
         for (var boneEnum = (HumanBodyBones)0; boneEnum < HumanBodyBones.LastBone; boneEnum++) {
             var bone = animator.GetBoneTransform(boneEnum);
             if (bone == null) continue;
-#if UNITY_2021_3_OR_NEWER
             bone.GetPositionAndRotation(out var position, out var rotation);
-#else
-            var position = bone.position;
-            var rotation = bone.rotation;
-#endif
             bool selected = selectedBones.Contains(boneEnum);
             var evt = Event.current;
             if (!selected || evt.shift) {

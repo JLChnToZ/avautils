@@ -3,7 +3,6 @@ using UnityEngine;
 using UnityEditor;
 
 using ShaderPropertyType = UnityEditor.ShaderUtil.ShaderPropertyType;
-using System.Text;
 
 public static class MaterialUtility {
 
