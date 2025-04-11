@@ -11,7 +11,6 @@ namespace JLChnToZ.EditorExtensions {
     public class HumanoidAvatarBuilderWindow : EditorWindow {
         static readonly Vector3Int NullMuscleIndeces = new Vector3Int(-1, -1, -1);
         static GUIContent tempContent;
-        static string[] humanBoneNames, muscleNames;
         static bool[] requireBones;
         static int[] parentBoneIndeces;
         static Vector3Int[] muscleIndeces;
@@ -25,18 +24,6 @@ namespace JLChnToZ.EditorExtensions {
         bool showAdvanced;
 
         static void Init() {
-            if (humanBoneNames == null) humanBoneNames = HumanTrait.BoneName;
-            if (muscleNames == null) muscleNames = HumanTrait.MuscleName;
-            if (parentBoneIndeces == null) {
-                parentBoneIndeces = new int[HumanTrait.BoneCount];
-                for (int i = 0; i < humanBoneNames.Length; i++)
-                    parentBoneIndeces[i] = HumanTrait.GetParentBone(i);
-            }
-            if (requireBones == null) {
-                requireBones = new bool[HumanTrait.BoneCount];
-                for (int i = 0; i < humanBoneNames.Length; i++)
-                    requireBones[i] = HumanTrait.RequiredBone(i);
-            }
             if (muscleIndeces == null) {
                 muscleIndeces = new Vector3Int[HumanTrait.MuscleCount];
                 for (int i = 0; i < muscleIndeces.Length; i++)
@@ -141,6 +128,8 @@ namespace JLChnToZ.EditorExtensions {
                         humanDescription.feetSpacing = EditorGUILayout.Slider("Feet Spacing", humanDescription.feetSpacing, 0, 1);
                         humanDescription.hasTranslationDoF = EditorGUILayout.Toggle("Translation DoF", humanDescription.hasTranslationDoF);
                     }
+                var humanBoneNames = HumanBoneNames;
+                var muscleNames = MuscleNames;
                 for (int i = 0; i < boneMap.Length; i++) {
                     bool shouldOverride = false;
                     using (new EditorGUILayout.HorizontalScope()) {
@@ -233,6 +222,7 @@ namespace JLChnToZ.EditorExtensions {
             }
             GuessBones(true);
             humanDescription = avatar.humanDescription;
+            var humanBoneNames = HumanBoneNames;
             foreach (var human in humanDescription.human) {
                 int boneIndex = Array.IndexOf(humanBoneNames, human.humanName);
                 if (boneIndex < 0) continue;
@@ -244,7 +234,7 @@ namespace JLChnToZ.EditorExtensions {
 
         void GuessBones(bool replaceAll = false) {
             if (selectedAnimator == null) return;
-            var newBoneMap = GuessHumanoidBodyBones(selectedAnimator.transform, null);
+            var newBoneMap = GuessHumanoidBodyBones(selectedAnimator.transform);
             if (replaceAll) {
                 boneMap = newBoneMap;
                 return;
@@ -258,6 +248,7 @@ namespace JLChnToZ.EditorExtensions {
             if (selectedAnimator == null) return;
             var ambiguousNameMap = new Dictionary<Transform, string>();
             var boneTransforms = new Dictionary<Transform, (Vector3 position, Quaternion rotation)>();
+            var humanBoneNames = HumanBoneNames;
             try {
                 var root = selectedAnimator.transform;
                 var boneNames = new HashSet<string>();
@@ -343,12 +334,14 @@ namespace JLChnToZ.EditorExtensions {
                 d_humanDescription.m_SkeletonHasParents = true;
                 d_humanDescription.m_HasExtraRoot = boneMap[0].parent != root;
                 humanDescription = d_humanDescription;
+                var orgAvatar = selectedAnimator.avatar;
+                if (orgAvatar != null) selectedAnimator.avatar = null; // Temporarily unset the avatar as it will affect the building process.
                 var avatar = AvatarBuilder.BuildHumanAvatar(root.gameObject, humanDescription);
+                if (orgAvatar != null) selectedAnimator.avatar = orgAvatar;
                 if (avatar == null || !avatar.isValid) {
                     Debug.LogError("[Humanoid Avatar Builder] Failed to Build humanoid avatar.", root);
                     return;
                 }
-                var orgAvatar = selectedAnimator.avatar;
                 string savePath = null;
                 if (orgAvatar != null) savePath = AssetDatabase.GetAssetPath(orgAvatar);
                 if (string.IsNullOrEmpty(savePath)) savePath = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(selectedAnimator.gameObject);

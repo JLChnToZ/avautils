@@ -5,6 +5,7 @@ using UnityEditor;
 using UnityEditor.EditorTools;
 
 using static JLChnToZ.CommonUtils.Dynamic.Limitless;
+using JLChnToZ.EditorExtensions;
 
 [EditorTool(NAME, typeof(Animator))]
 public class HumanBoneEditor : EditorTool {
@@ -14,7 +15,6 @@ public class HumanBoneEditor : EditorTool {
     static readonly dynamic AnimationRecording = Static("UnityEditorInternal.AnimationRecording, UnityEditor");
     static readonly dynamic AnimationWindow = Static("UnityEditor.AnimationWindow, UnityEditor");
     static string[] musclePropertyNames;
-    static string[] boneNames;
     static GUIContent icon, tempContent;
     static EditorWindow animationEditorWindow;
     static dynamic animWindowState, controlInterface;
@@ -40,7 +40,6 @@ public class HumanBoneEditor : EditorTool {
     }
 
     static void Init() {
-        if (boneNames == null) boneNames = HumanTrait.BoneName;
         if (musclePropertyNames == null) {
             musclePropertyNames = HumanTrait.MuscleName;
             musclePropertyNames[55] = "LeftHand.Thumb.1 Stretched";
@@ -215,6 +214,7 @@ public class HumanBoneEditor : EditorTool {
             poseHandler = null;
             Repose();
         }
+        var boneNames = MecanimUtils.HumanBoneNames;
         for (var boneEnum = (HumanBodyBones)0; boneEnum < HumanBodyBones.LastBone; boneEnum++) {
             var bone = animator.GetBoneTransform(boneEnum);
             if (bone == null) continue;
