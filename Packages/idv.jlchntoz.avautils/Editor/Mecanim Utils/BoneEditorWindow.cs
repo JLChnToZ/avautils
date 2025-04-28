@@ -16,6 +16,8 @@ namespace JLChnToZ.EditorExtensions {
         public static Color unReferencedBoneColor = new Color(0, 0, 0, 0);
         public static Color noCoverageBoneColor = new Color(0, 0, 0.5F, 0);
         static GUIContent tempContent, warningIcon, infoIcon, filterIcon, plusIcon, avatarIcon, rootIcon, notAssignedIcon, noWeightIcon;
+        static readonly GUILayoutOption[] noExpandWidth = new[] { GUILayout.ExpandWidth(false) };
+        static readonly GUILayoutOption[] forceExpandWidth = new[] { GUILayout.ExpandWidth(true) };
         static readonly HashSet<Transform> boneSet = new HashSet<Transform>();
         static readonly Stack<Transform> boneChain = new Stack<Transform>();
         static readonly HashSet<Transform> walkedBones = new HashSet<Transform>();
@@ -27,6 +29,7 @@ namespace JLChnToZ.EditorExtensions {
         static bool autoApply;
         static Transform[] copiedBones;
         static dynamic boneRenderer;
+        static Action refreshBoneCoverageMap;
         HashSet<Transform> humanoidBones;
         SkinnedMeshRenderer target;
         Mesh mesh;
@@ -35,10 +38,10 @@ namespace JLChnToZ.EditorExtensions {
         static float maxCoverage;
         static bool shouldRefreshBoneCoverageMap;
         static Transform selectedBone;
-        (int refCount, float coverage)[] boneInfos;
+        BoneCoverage[] boneInfos;
+        PoseModeState poseModeState;
         ReorderableList list;
         Vector2 scrollPos;
-        static Action refreshBoneCoverageMap;
 
         static BoneEditorWindow() {
             SceneView.duringSceneGui += OnSceneGUI;
@@ -102,6 +105,10 @@ namespace JLChnToZ.EditorExtensions {
         }
 
         void OnDisable() {
+            if (poseModeState != null) {
+                poseModeState.Dispose();
+                poseModeState = null;
+            }
             Undo.undoRedoPerformed -= OnUndoRedo;
             refreshBoneCoverageMap -= RefreshBoneCoverageMap;
             shouldRefreshBoneCoverageMap = true;
@@ -125,72 +132,39 @@ namespace JLChnToZ.EditorExtensions {
                 RefreshBones();
             }
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar)) {
-                if (GUILayout.Button(GetGUIContent("Clear Empty", "Clear empty bone references."), EditorStyles.toolbarButton, GUILayout.ExpandWidth(false))) {
-                    var undoGroup = Undo.GetCurrentGroup();
-                    for (int i = 0; i < bones.Length; i++)
-                        if (bones[i] != null && boneInfos[i].coverage <= 0) ReplaceBone(i, null);
-                    ApplyBones("Fill Empty Bones");
-                    Undo.SetCurrentGroupName("Fill Empty Bones");
-                    Undo.CollapseUndoOperations(Undo.GetCurrentGroup());
-                }
-                if (GUILayout.Button(GetGUIContent("Fill Empty", "Fill empty bone references."), EditorStyles.toolbarButton, GUILayout.ExpandWidth(false))) {
-                    var undoGroup = Undo.GetCurrentGroup();
-                    for (int i = 0; i < bones.Length; i++)
-                        if (bones[i] == null && boneInfos[i].coverage > 0) AutoSetBone(i, false);
-                    ApplyBones("Fill Empty Bones");
-                    Undo.SetCurrentGroupName("Fill Empty Bones");
-                    Undo.CollapseUndoOperations(Undo.GetCurrentGroup());
-                }
-                if (GUILayout.Button(GetGUIContent("Set Bindpose", "Move all bones to bindpose."), EditorStyles.toolbarButton, GUILayout.ExpandWidth(false))) {
-                    var undoGroup = Undo.GetCurrentGroup();
-                    walkedBones.Clear();
-                    foreach (var i in GetSortedBoneIndecesByDepth())
-                        if (bones[i] != null && !walkedBones.Add(bones[i])) AutoSetBone(i, true);
-                    ApplyBones("Move Bones To Bindpose");
-                    Undo.SetCurrentGroupName("Move Bones To Bindpose");
-                    Undo.CollapseUndoOperations(Undo.GetCurrentGroup());
-                }
-                if (GUILayout.Button(GetGUIContent("Reassign Dup.", "Reassign duplicated bones."), EditorStyles.toolbarButton, GUILayout.ExpandWidth(false))) {
-                    var undoGroup = Undo.GetCurrentGroup();
-                    walkedBones.Clear();
-                    foreach (var i in GetSortedBoneIndecesByDepth())
-                        if (bones[i] != null && !walkedBones.Add(bones[i])) ReassignBone(i);
-                    ApplyBones("Reassign Bones");
-                    Undo.SetCurrentGroupName("Reassign Bones");
-                    Undo.CollapseUndoOperations(Undo.GetCurrentGroup());
-                }
-                if (GUILayout.Button(GetGUIContent("Rename Dup.", "Rename duplicated bones."), EditorStyles.toolbarButton, GUILayout.ExpandWidth(false))) {
-                    var undoGroup = Undo.GetCurrentGroup();
-                    walkedNames.Clear();
-                    walkedBones.Clear();
-                    foreach (var i in GetSortedBoneIndecesByDepth()) {
-                        var bone = bones[i];
-                        if (bone == null || walkedBones.Add(bone)) continue;
-                        var name = bone.name;
-                        if (walkedNames.Add(name)) continue;
-                        name = GetUniqueNameForBone(bone);
-                        walkedNames.Add(name);
-                        Undo.RecordObject(bone.gameObject, "Rename Bone");
-                        bone.name = name;
-                    }
-                    ApplyBones("Rename Bones");
-                    Undo.SetCurrentGroupName("Rename Bones");
-                    Undo.CollapseUndoOperations(undoGroup);
-                }
+                if (GUILayout.Button(GetGUIContent("Clear Empty", "Clear empty bone references."), EditorStyles.toolbarButton, noExpandWidth))
+                    ClearEmpty();
+                if (GUILayout.Button(GetGUIContent("Fill Empty", "Fill empty bone references."), EditorStyles.toolbarButton, noExpandWidth))
+                    FillEmpty();
+                if (GUILayout.Button(GetGUIContent("Set Bindpose", "Move all bones to bindpose."), EditorStyles.toolbarButton, noExpandWidth))
+                    SetBindpose();
+                if (GUILayout.Button(GetGUIContent("Reassign Dup.", "Reassign duplicated bones."), EditorStyles.toolbarButton, noExpandWidth))
+                    ReassignDuplicatedBones();
+                if (GUILayout.Button(GetGUIContent("Rename Dup.", "Rename duplicated bones."), EditorStyles.toolbarButton, noExpandWidth))
+                    RenameDuplicatedBones();
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button("Refresh", EditorStyles.toolbarButton, GUILayout.ExpandWidth(false)))
+                if (GUILayout.Button("Refresh", EditorStyles.toolbarButton, noExpandWidth))
                     RefreshBones();
-                using (var changed = new EditorGUI.ChangeCheckScope()) {
-                    autoApply = GUILayout.Toggle(autoApply, GetGUIContent(autoApply ? "Auto Apply" : "Auto", "Auto apply changes to target skinned mesh renderer."), EditorStyles.toolbarButton, GUILayout.ExpandWidth(false));
-                    if (changed.changed) EditorPrefs.SetBool(EDITOR_PREFS_AUTOAPPLY, autoApply);
+                if (poseModeState == null) {
+                    if (GUILayout.Toggle(false, "Repose", EditorStyles.toolbarButton, noExpandWidth))
+                        EnablePoseMode();
+                    using (var changed = new EditorGUI.ChangeCheckScope()) {
+                        autoApply = GUILayout.Toggle(autoApply, GetGUIContent(autoApply ? "Auto Apply" : "Auto", "Auto apply changes to target skinned mesh renderer."), EditorStyles.toolbarButton, noExpandWidth);
+                        if (changed.changed) EditorPrefs.SetBool(EDITOR_PREFS_AUTOAPPLY, autoApply);
+                    }
+                    if (!autoApply && GUILayout.Button("Apply", EditorStyles.toolbarButton, noExpandWidth))
+                        ApplyBones();
+                } else {
+                    if (!GUILayout.Toggle(true, "Repose", EditorStyles.toolbarButton, noExpandWidth))
+                        CancelPoseMode();
+                    if (GUILayout.Button("Apply", EditorStyles.toolbarButton, noExpandWidth))
+                        ApplyPoseMode();
                 }
-                if (!autoApply && GUILayout.Button("Apply", EditorStyles.toolbarButton, GUILayout.ExpandWidth(false)))
-                    ApplyBones();
             }
             using (new EditorGUILayout.HorizontalScope())
             using (new EditorGUI.DisabledScope(true)) {
                 EditorGUILayout.ObjectField(mesh, typeof(Mesh), false, GUILayout.Width(EditorGUIUtility.labelWidth + ReorderableList.Defaults.dragHandleWidth - 4));
-                EditorGUILayout.ObjectField(target, typeof(SkinnedMeshRenderer), true, GUILayout.ExpandWidth(true));
+                EditorGUILayout.ObjectField(target, typeof(SkinnedMeshRenderer), true, forceExpandWidth);
             }
             using (var scroll = new EditorGUILayout.ScrollViewScope(scrollPos)) {
                 scrollPos = scroll.scrollPosition;
@@ -328,14 +302,11 @@ namespace JLChnToZ.EditorExtensions {
                 ApplyBones("Initialize Bones");
             } else
                 UpdateDirty(false);
-            boneInfos = new (int, float)[boneCount];
+            boneInfos = new BoneCoverage[boneCount];
             totalCoverage = 0;
             foreach (var boneWeight in mesh.GetAllBoneWeights()) {
-                var boneInfo = boneInfos[boneWeight.boneIndex];
-                boneInfo.refCount++;
-                boneInfo.coverage += boneWeight.weight;
                 totalCoverage += boneWeight.weight;
-                boneInfos[boneWeight.boneIndex] = boneInfo;
+                boneInfos[boneWeight.boneIndex] += boneWeight.weight;
             }
             list = new ReorderableList(bones, typeof(Transform), true, true, false, false) {
                 drawElementCallback = OnListDrawElement,
@@ -353,13 +324,13 @@ namespace JLChnToZ.EditorExtensions {
 
         void OnListDrawElement(Rect rect, int index, bool isActive, bool isFocused) {
             var bone = bones[index];
-            var (refCount, coverage) = boneInfos[index];
+            ref var boneInfo = ref boneInfos[index];
             rect.y += EditorGUIUtility.standardVerticalSpacing;
             var rect2 = rect;
             rect2.width -= EditorGUIUtility.singleLineHeight * 2;
             rect2.height = EditorGUIUtility.singleLineHeight;
             var contentColor = GUI.contentColor;
-            if (coverage == 0) {
+            if (boneInfo.coverage == 0) {
                 var newContentColor = contentColor;
                 newContentColor.a *= 0.5F;
                 GUI.contentColor = newContentColor;
@@ -367,8 +338,8 @@ namespace JLChnToZ.EditorExtensions {
             var iconRect = rect2;
             iconRect.x = rect2.xMin + EditorGUIUtility.labelWidth;
             iconRect.width = 16;
-            rect2 = EditorGUI.PrefixLabel(rect2, GetGUIContent($"{index} ({refCount}, {coverage / totalCoverage:0.##%})"));
-            if (coverage <= 0) {
+            rect2 = EditorGUI.PrefixLabel(rect2, GetGUIContent($"{index} ({boneInfo.refCount}, {boneInfo.coverage / totalCoverage:0.##%})"));
+            if (boneInfo.coverage <= 0) {
                 if (noWeightIcon == null)
                     noWeightIcon = new GUIContent(EditorGUIUtility.IconContent("UnLinked")) {
                         tooltip = "This bone has no weights. In most cases you can safely remove this bone reference.",
@@ -425,11 +396,9 @@ namespace JLChnToZ.EditorExtensions {
                 GetGUIContent(tooltip: "Create new bone transform at bindpose.", iconContent: plusIcon) :
                 GetGUIContent(tooltip: "Try move bone transform to bindpose.", iconContent: filterIcon),
                 iconButtonStyle
-            )) {                var undoGroup = Undo.GetCurrentGroup();
+            )) {
                 AutoSetBone(index, true);
-                ApplyBones("Update Bones");
-                Undo.SetCurrentGroupName(bone == null ? "Create Bone Transform" : "Move Bone Transform");
-                Undo.CollapseUndoOperations(undoGroup);
+                ApplyBones(bone == null ? "Create Bone Transform" : "Move Bone Transform", true);
             }
             rect2.x += 16;
             if (bone != null) {
@@ -510,7 +479,8 @@ namespace JLChnToZ.EditorExtensions {
             return true;
         }
 
-        void ApplyBones(string customUndoName = null) {
+        void ApplyBones(string customUndoName = null, bool isUndoGroup = false) {
+            if (poseModeState != null) return;
             bool forced = string.IsNullOrEmpty(customUndoName);
             if (autoApply || forced) {
                 using (var so = new SerializedObject(target)) {
@@ -526,11 +496,98 @@ namespace JLChnToZ.EditorExtensions {
                 UpdateDirty(false);
             } else UpdateDirty(true);
             shouldRefreshBoneCoverageMap = true;
+            if (isUndoGroup) {
+                if (!forced) Undo.SetCurrentGroupName(customUndoName);
+                Undo.CollapseUndoOperations(Undo.GetCurrentGroup());
+            }
         }
 
         void ReplaceBone(int index, Transform bone) {
             bones[index] = bone;
             shouldRefreshBoneCoverageMap = true;
+        }
+
+        void ClearEmpty() {
+            for (int i = 0; i < bones.Length; i++)
+                if (bones[i] != null && boneInfos[i].coverage <= 0) ReplaceBone(i, null);
+            ApplyBones("Clear Empty Bones", true);
+        }
+
+        void FillEmpty() {
+            for (int i = 0; i < bones.Length; i++)
+                if (bones[i] == null && boneInfos[i].coverage > 0) AutoSetBone(i, false);
+            ApplyBones("Fill Empty Bones", true);
+        }
+
+        void SetBindpose() {
+            walkedBones.Clear();
+            foreach (var i in GetSortedBoneIndecesByDepth())
+                if (bones[i] != null && !walkedBones.Add(bones[i])) AutoSetBone(i, true);
+            ApplyBones("Move Bones To Bindpose", true);
+        }
+
+        void ReassignDuplicatedBones() {
+            walkedBones.Clear();
+            foreach (var i in GetSortedBoneIndecesByDepth())
+                if (bones[i] != null && !walkedBones.Add(bones[i])) ReassignBone(i);
+            ApplyBones("Reassign Duplicated Bones", true);
+        }
+
+        void RenameDuplicatedBones() {
+            walkedNames.Clear();
+            walkedBones.Clear();
+            foreach (var i in GetSortedBoneIndecesByDepth()) {
+                var bone = bones[i];
+                if (bone == null || walkedBones.Add(bone)) continue;
+                var name = bone.name;
+                if (walkedNames.Add(name)) continue;
+                name = GetUniqueNameForBone(bone);
+                walkedNames.Add(name);
+                Undo.RecordObject(bone.gameObject, "Rename Bone");
+                bone.name = name;
+            }
+            ApplyBones("Rename Duplicated Bones", true);
+        }
+
+        void EnablePoseMode() {
+            if (poseModeState != null) return;
+            poseModeState = new PoseModeState(target, bones);
+        }
+
+        void ApplyPoseMode() {
+            if (poseModeState == null) return;
+            var mesh = poseModeState.TargetMesh;
+            Undo.RecordObject(target, "Apply Pose");
+            try {
+                if (!poseModeState.Apply()) return;
+                var newMesh = poseModeState.TargetMesh;
+                var path = EditorUtility.SaveFilePanelInProject(
+                    "Save Modified Mesh",
+                    $"{target.name} Baked Mesh",
+                    "asset",
+                    "Save modified mesh to project folder."
+                );
+                if (string.IsNullOrEmpty(path)) {
+                    DestroyImmediate(newMesh);
+                    return;
+                }
+                AssetDatabase.CreateAsset(newMesh, path);
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+                mesh = newMesh;
+            } finally {
+                target.sharedMesh = mesh;
+                target.bones = bones;
+                poseModeState.Dispose();
+                poseModeState = null;
+            }
+            Undo.CollapseUndoOperations(Undo.GetCurrentGroup());
+        }
+
+        void CancelPoseMode() {
+            if (poseModeState == null) return;
+            poseModeState.Dispose();
+            poseModeState = null;
         }
 
         int[] GetSortedBoneIndecesByDepth() {
@@ -571,8 +628,8 @@ namespace JLChnToZ.EditorExtensions {
                 coverage = Mathf.Sqrt(coverage / maxCoverage);
                 result = Color.HSVToRGB(
                     Mathf.Lerp(0.6666667F, 0.3333333F, coverage),
-                    Mathf.Lerp(2, 0, coverage),
-                    Mathf.Lerp(0.5F, 1, coverage)
+                    Mathf.Lerp(2F, 0F, coverage),
+                    Mathf.Lerp(0.5F, 1F, coverage)
                 );
                 result.a = 0.5F;
             } else result = hasReference ? noCoverageBoneColor : unReferencedBoneColor;
@@ -621,6 +678,94 @@ namespace JLChnToZ.EditorExtensions {
             newBone.SetParent(bone, false);
             Undo.RegisterCreatedObjectUndo(go, "Create Bone");
             ReplaceBone(index, newBone);
+        }
+
+        readonly struct BoneCoverage {
+            public readonly int refCount;
+            public readonly float coverage;
+
+            public BoneCoverage(int refCount, float coverage) {
+                this.refCount = refCount;
+                this.coverage = coverage;
+            }
+
+            public static BoneCoverage operator +(BoneCoverage a, float weight) =>
+                new BoneCoverage(a.refCount + 1, a.coverage + weight);
+        }
+
+        class PoseModeState : IDisposable {
+            readonly SkinnedMeshRenderer target;
+            readonly GameObject targetObject;
+            readonly Transform targetTransform;
+            public readonly Transform[] bones;
+            readonly Matrix4x4[] poses;
+            readonly Mesh previewMesh;
+            Mesh mesh;
+
+            public Mesh TargetMesh => mesh;
+
+            public PoseModeState(SkinnedMeshRenderer target, Transform[] bones = null) {
+                this.target = target;
+                targetObject = target.gameObject;
+                targetTransform = target.transform;
+                mesh = target.sharedMesh;
+                if (mesh == null) return;
+                if (bones == null) bones = target.bones;
+                if (bones == null || bones.Length == 0) return;
+                this.bones = bones;
+                poses = new Matrix4x4[bones.Length];
+                for (int i = 0; i < bones.Length; i++) {
+                    var bone = bones[i];
+                    poses[i] = bone != null ? bone.localToWorldMatrix : Matrix4x4.identity;
+                }
+                previewMesh = new Mesh {
+                    hideFlags = HideFlags.HideAndDontSave,
+                };
+                target.BakeMesh(previewMesh, true);
+                target.forceRenderingOff = true;
+                SceneView.duringSceneGui += DrawPreview;
+            }
+
+            public bool Apply() {
+                if (mesh == null || bones == null) return false;
+                var bindposes = mesh.bindposes;
+                bool modified = false;
+                for (int i = 0, length = Mathf.Min(poses.Length, bones.Length); i < length; i++) {
+                    if (bones[i] == null) continue;
+                    var m = bones[i].worldToLocalMatrix * poses[i];
+                    if (m.isIdentity) continue;
+                    bindposes[i] = m * bindposes[i];
+                    modified = true;
+                }
+                if (!modified) return false;
+                var modifiedMesh = Instantiate(mesh);
+                modifiedMesh.name = mesh.name;
+                modifiedMesh.bindposes = bindposes;
+                modifiedMesh.UploadMeshData(false);
+                target.sharedMesh = modifiedMesh;
+                mesh = modifiedMesh;
+                target.BakeMesh(previewMesh, true);
+                return true;
+            }
+
+            void DrawPreview(SceneView sceneView) {
+                if (previewMesh == null || !targetObject.activeInHierarchy || !target.enabled) return;
+                var materials = target.sharedMaterials;
+                var matrix = targetTransform.localToWorldMatrix;
+                var layer = targetObject.layer;
+                if (materials == null || materials.Length == 0) return;
+                for (int i = 0; i < materials.Length; i++) {
+                    var material = materials[i];
+                    if (material == null) continue;
+                    Graphics.DrawMesh(previewMesh, matrix, material, layer, sceneView.camera, i);
+                }
+            }
+
+            public void Dispose() {
+                if (previewMesh != null) DestroyImmediate(previewMesh);
+                target.forceRenderingOff = false;
+                SceneView.duringSceneGui -= DrawPreview;
+            }
         }
     }
 }
