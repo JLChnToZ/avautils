@@ -608,7 +608,7 @@ namespace JLChnToZ.EditorExtensions {
                 var newMesh = poseModeState.TargetMesh;
                 var path = EditorUtility.SaveFilePanelInProject(
                     "Save Modified Mesh",
-                    $"{target.name} Baked Mesh",
+                    $"{target.name} Reposed Mesh",
                     "asset",
                     "Save modified mesh to project folder."
                 );
