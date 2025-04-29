@@ -479,8 +479,8 @@ namespace JLChnToZ.EditorExtensions {
             if (bone == null) {
                 go = new GameObject($"{target.name}.Bone {index}");
                 bone = go.transform;
-                bone.SetParent(rootBone, false);
                 go.name = GetUniqueNameForBone(bone, rootBone);
+                bone.SetParent(rootBone, false);
                 ReplaceBone(index, bone);
                 var parentBone = rootBone.parent;
                 offset = parentBone != null ? parentBone.localToWorldMatrix : Matrix4x4.identity;
@@ -679,9 +679,14 @@ namespace JLChnToZ.EditorExtensions {
         }
 
         string GetUniqueNameForBone(Transform bone, Transform parent = null) {
-            var newName = bone.name;
+            var orgName = bone.name;
+            var newName = orgName;
             if (parent == null) parent = bone.parent;
-            if (parent != null) newName = GameObjectUtility.GetUniqueNameForSibling(parent, newName);
+            if (parent != null) {
+                bone.name = $"{orgName}_";
+                newName = GameObjectUtility.GetUniqueNameForSibling(parent, orgName);
+                bone.name = orgName;
+            }
             var existNames = new HashSet<string>();
             foreach (var otherBone in bones)
                 if (otherBone != null && otherBone != bone)
