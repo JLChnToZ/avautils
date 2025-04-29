@@ -13,9 +13,23 @@ namespace JLChnToZ.EditorExtensions {
         const string COPY_MENU_PATH = BASE_MENU_PATH + "Copy Bone References";
         const string PASTE_MENU_PATH = BASE_MENU_PATH + "Paste Bone References";
         const string EDITOR_PREFS_AUTOAPPLY = "BoneEditorWindow.AutoApply";
-        public static Color unReferencedBoneColor = new Color(0, 0, 0, 0);
-        public static Color noCoverageBoneColor = new Color(0, 0, 0.5F, 0);
-        static GUIContent tempContent, warningIcon, infoIcon, filterIcon, plusIcon, avatarIcon, rootIcon, notAssignedIcon, noWeightIcon;
+        const string APPLY_ICON = "SaveAs";
+        const string AUTO_APPLY_ICON = "SaveFromPlay";
+        const string REFRESH_ICON = "Refresh";
+        const string NO_WEIGHT_ICON = "UnLinked";
+        const string MISSING_ICON = "Invalid";
+        const string AVATAR_ICON = "Avatar Icon";
+        const string ROOT_ICON = "AvatarPivot";
+        const string ADD_ICON = "Toolbar Plus";
+        const string MOVE_ICON = "Animation.FilterBySelection";
+        const string REMOVE_ICON = "Toolbar Minus";
+        const string REPOSE_ICON = "TransformTool";
+        const string REPOSE_CANCEL_ICON = "TransformTool On";
+        const string WARN_ICON = "Warning";
+        const string INFO_ICON = "console.infoicon";
+        public static readonly Color unReferencedBoneColor = new Color(0, 0, 0, 0);
+        public static readonly Color noCoverageBoneColor = new Color(0, 0, 0.5F, 0);
+        static readonly GUIContent tempContent = new GUIContent();
         static readonly GUILayoutOption[] noExpandWidth = new[] { GUILayout.ExpandWidth(false) };
         static readonly GUILayoutOption[] forceExpandWidth = new[] { GUILayout.ExpandWidth(true) };
         static readonly HashSet<Transform> boneSet = new HashSet<Transform>();
@@ -26,26 +40,48 @@ namespace JLChnToZ.EditorExtensions {
         static readonly HashSet<(Transform, Transform)> boneGizmoMap = new HashSet<(Transform, Transform)>();
         static readonly Dictionary<Transform, bool> actualBones = new Dictionary<Transform, bool>();
         static readonly HashSet<Transform> rootBones = new HashSet<Transform>();
+        static string[] humanBoneNameTooltips;
         static bool autoApply;
         static Transform[] copiedBones;
         static dynamic boneRenderer;
         static Action refreshBoneCoverageMap;
-        HashSet<Transform> humanoidBones;
+        Dictionary<Transform, int> humanoidBones;
         SkinnedMeshRenderer target;
         Mesh mesh;
         Transform[] bones;
-        float totalCoverage;
         static float maxCoverage;
         static bool shouldRefreshBoneCoverageMap;
         static Transform selectedBone;
         BoneCoverage[] boneInfos;
+        string[] boneInfoStrings;
         PoseModeState poseModeState;
         ReorderableList list;
         Vector2 scrollPos;
+        bool isDirty;
 
-        static BoneEditorWindow() {
-            SceneView.duringSceneGui += OnSceneGUI;
-        }
+        static GUIContent RefreshContent => GetGUIContent(null, "Refresh", REFRESH_ICON);
+
+        static GUIContent ReposeContent => GetGUIContent(null, "Repose Bones (Modifies Skinned Mesh)", REPOSE_ICON);
+
+        static GUIContent AutoApplyContent => GetGUIContent(null, "Auto apply changes to target skinned mesh renderer.", AUTO_APPLY_ICON);
+
+        static GUIContent ApplyContent => GetGUIContent(null, "Apply changes to skinned mesh renderer.", APPLY_ICON);
+
+        static GUIContent ApplyReposeContent => GetGUIContent(null, "Save reposed skinned mesh.", APPLY_ICON);
+
+        static GUIContent DiscardReposeContent => GetGUIContent(null, "Discard reposed skinned mesh.", REPOSE_CANCEL_ICON);
+
+        static GUIContent FillEmptyContent => GetGUIContent(null, "Fill empty bone references.", ADD_ICON);
+
+        static GUIContent ClearEmptyContent => GetGUIContent(null, "Clear empty bone references.", REMOVE_ICON);
+
+        static GUIContent MoveAllContent => GetGUIContent(null, "Try moving all bones to bindpose.", MOVE_ICON);
+        
+        static GUIContent ReassignDuplicateContent => GetGUIContent("Reassign Dup.", "Reassign duplicated bones.");
+
+        static GUIContent RenameDuplicateContent => GetGUIContent("Rename Dup.", "Rename duplicated bones.");
+
+        static BoneEditorWindow() => SceneView.duringSceneGui += OnSceneGUI;
 
         [MenuItem(MENU_PATH)]
         static void BoneEditorMenu(MenuCommand command) {
@@ -87,9 +123,14 @@ namespace JLChnToZ.EditorExtensions {
             copiedBones.Length == (command.context as SkinnedMeshRenderer).sharedMesh.bindposes.Length;
 
         void OnEnable() {
-            if (filterIcon == null) filterIcon = EditorGUIUtility.IconContent("d_Animation.FilterBySelection");
-            if (plusIcon == null) plusIcon = EditorGUIUtility.IconContent("Toolbar Plus");
-            if (filterIcon == null) filterIcon = EditorGUIUtility.IconContent("Animation.FilterBySelection");
+            if (humanBoneNameTooltips == null) {
+                var humanBoneNames = MecanimUtils.HumanBoneNames;
+                humanBoneNameTooltips = new string[humanBoneNames.Length];
+                for (int i = 0; i < humanBoneNames.Length; i++) {
+                    var name = humanBoneNames[i];
+                    humanBoneNameTooltips[i] = $"This is {ObjectNames.NicifyVariableName(name)} bone (humanoid).";
+                }
+            }
             if (boneRenderer == null) boneRenderer = Limitless.Construct("UnityEditor.Handles+BoneRenderer, UnityEditor");
             if (target == null) return;
             minSize = new Vector2(500, 100);
@@ -98,6 +139,7 @@ namespace JLChnToZ.EditorExtensions {
             Undo.undoRedoPerformed += OnUndoRedo;
             autoApply = EditorPrefs.GetBool(EDITOR_PREFS_AUTOAPPLY, true);
             refreshBoneCoverageMap += RefreshBoneCoverageMap;
+            isDirty = false;
         }
 
         void OnLostFocus() {
@@ -114,8 +156,10 @@ namespace JLChnToZ.EditorExtensions {
             shouldRefreshBoneCoverageMap = true;
         }
 
-        void UpdateDirty(bool isDirty) {
-            titleContent = new GUIContent($"Bone Editor{(isDirty ? "*" : "")}");
+        void UpdateTitle() {
+            var content = titleContent;
+            content.text = poseModeState != null ? "Bone Editor (Reposing)" : isDirty ? "Bone Editor*" : "Bone Editor";
+            titleContent = content;
         }
 
         void OnGUI() {
@@ -132,34 +176,38 @@ namespace JLChnToZ.EditorExtensions {
                 RefreshBones();
             }
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar)) {
-                if (GUILayout.Button(GetGUIContent("Clear Empty", "Clear empty bone references."), EditorStyles.toolbarButton, noExpandWidth))
-                    ClearEmpty();
-                if (GUILayout.Button(GetGUIContent("Fill Empty", "Fill empty bone references."), EditorStyles.toolbarButton, noExpandWidth))
-                    FillEmpty();
-                if (GUILayout.Button(GetGUIContent("Set Bindpose", "Move all bones to bindpose."), EditorStyles.toolbarButton, noExpandWidth))
-                    SetBindpose();
-                if (GUILayout.Button(GetGUIContent("Reassign Dup.", "Reassign duplicated bones."), EditorStyles.toolbarButton, noExpandWidth))
-                    ReassignDuplicatedBones();
-                if (GUILayout.Button(GetGUIContent("Rename Dup.", "Rename duplicated bones."), EditorStyles.toolbarButton, noExpandWidth))
-                    RenameDuplicatedBones();
-                GUILayout.FlexibleSpace();
-                if (GUILayout.Button("Refresh", EditorStyles.toolbarButton, noExpandWidth))
+                if (GUILayout.Button(RefreshContent, EditorStyles.toolbarButton, noExpandWidth))
                     RefreshBones();
                 if (poseModeState == null) {
-                    if (GUILayout.Toggle(false, "Repose", EditorStyles.toolbarButton, noExpandWidth))
+                    if (GUILayout.Button(ReposeContent, EditorStyles.toolbarButton, noExpandWidth))
                         EnablePoseMode();
                     using (var changed = new EditorGUI.ChangeCheckScope()) {
-                        autoApply = GUILayout.Toggle(autoApply, GetGUIContent(autoApply ? "Auto Apply" : "Auto", "Auto apply changes to target skinned mesh renderer."), EditorStyles.toolbarButton, noExpandWidth);
+                        autoApply = GUILayout.Toggle(autoApply, AutoApplyContent, EditorStyles.toolbarButton, noExpandWidth);
                         if (changed.changed) EditorPrefs.SetBool(EDITOR_PREFS_AUTOAPPLY, autoApply);
                     }
-                    if (!autoApply && GUILayout.Button("Apply", EditorStyles.toolbarButton, noExpandWidth))
-                        ApplyBones();
+                    using (new EditorGUI.DisabledScope(autoApply))
+                        if (GUILayout.Button(ApplyContent, EditorStyles.toolbarButton, noExpandWidth))
+                            ApplyBones();
                 } else {
-                    if (!GUILayout.Toggle(true, "Repose", EditorStyles.toolbarButton, noExpandWidth))
+                    if (GUILayout.Button(DiscardReposeContent, EditorStyles.toolbarButton, noExpandWidth))
                         CancelPoseMode();
-                    if (GUILayout.Button("Apply", EditorStyles.toolbarButton, noExpandWidth))
+                    using (new EditorGUI.DisabledScope(true))
+                        GUILayout.Label(AutoApplyContent, EditorStyles.toolbarButton, noExpandWidth);
+                    if (GUILayout.Button(ApplyReposeContent, EditorStyles.toolbarButton, noExpandWidth))
                         ApplyPoseMode();
                 }
+                EditorGUILayout.Space();
+                if (GUILayout.Button(FillEmptyContent, EditorStyles.toolbarButton, noExpandWidth))
+                    FillEmpty();
+                if (GUILayout.Button(ClearEmptyContent, EditorStyles.toolbarButton, noExpandWidth))
+                    ClearEmpty();
+                if (GUILayout.Button(MoveAllContent, EditorStyles.toolbarButton, noExpandWidth))
+                    SetBindpose();
+                if (GUILayout.Button(ReassignDuplicateContent, EditorStyles.toolbarButton, noExpandWidth))
+                    ReassignDuplicatedBones();
+                if (GUILayout.Button(RenameDuplicateContent, EditorStyles.toolbarButton, noExpandWidth))
+                    RenameDuplicatedBones();
+                GUILayout.FlexibleSpace();
             }
             using (new EditorGUILayout.HorizontalScope())
             using (new EditorGUI.DisabledScope(true)) {
@@ -187,11 +235,10 @@ namespace JLChnToZ.EditorExtensions {
             if (animator == null) return;
             var avatar = animator.avatar;
             if (avatar == null || !avatar.isValid || !avatar.isHuman) return;
-            if (humanoidBones == null) humanoidBones = new HashSet<Transform>();
-            for (var i = HumanBodyBones.Hips; i < HumanBodyBones.LastBone; i++) {
-                var bone = animator.GetBoneTransform(i);
-                if (bone != null) humanoidBones.Add(bone);
-            }
+            if (humanoidBones == null) humanoidBones = new Dictionary<Transform, int>();
+            var bones = MecanimUtils.FetchHumanoidBodyBones(avatar, animator.transform);
+            for (int i = 0; i < bones.Length; i++)
+                if (bones[i] != null) humanoidBones.Add(bones[i], i);
         }
 
         static void OnSceneGUI(SceneView sceneView) {
@@ -200,6 +247,7 @@ namespace JLChnToZ.EditorExtensions {
             if (boneRenderer == null) return;
             boneRenderer.ClearInstances();
             foreach (var (current, child) in boneGizmoMap) {
+                if (current == null) continue;
                 var position = current.position;
                 if (child != null) {
                     boneRenderer.AddBoneInstance(position, child.position, GetBoneColor(child, current));
@@ -285,10 +333,9 @@ namespace JLChnToZ.EditorExtensions {
         }
 
         void OnUndoRedo() {
-            if (autoApply) {
-                RefreshBones();
-                Repaint();
-            }
+            if (!autoApply) return;
+            RefreshBones();
+            Repaint();
         }
 
         void RefreshBones() {
@@ -300,20 +347,29 @@ namespace JLChnToZ.EditorExtensions {
                 if (bones != null) Array.Copy(bones, newBones, Mathf.Min(bones.Length, boneCount));
                 bones = newBones;
                 ApplyBones("Initialize Bones");
-            } else
-                UpdateDirty(false);
+            } else {
+                isDirty = false;
+                UpdateTitle();
+            }
             boneInfos = new BoneCoverage[boneCount];
-            totalCoverage = 0;
+            float totalCoverage = 0;
             foreach (var boneWeight in mesh.GetAllBoneWeights()) {
                 totalCoverage += boneWeight.weight;
                 boneInfos[boneWeight.boneIndex] += boneWeight.weight;
+            }
+            Debug.Assert(Mathf.Approximately(totalCoverage, mesh.vertexCount), $"Bone weight coverage {totalCoverage} != vertex count {mesh.vertexCount}", mesh);
+            if (boneInfoStrings == null || boneInfoStrings.Length < boneInfos.Length)
+                boneInfoStrings = new string[boneInfos.Length];
+            for (int i = 0; i < boneInfos.Length; i++) {
+                ref var boneInfo = ref boneInfos[i];
+                boneInfoStrings[i] = $"{i} ({boneInfo.refCount}, {boneInfo.coverage / totalCoverage:0.##%})";
             }
             list = new ReorderableList(bones, typeof(Transform), true, true, false, false) {
                 drawElementCallback = OnListDrawElement,
                 drawHeaderCallback = DoNotDraw,
                 drawFooterCallback = DoNotDraw,
                 onReorderCallback = OnListReorder,
-                elementHeight = EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing,
+                elementHeight = EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing * 0.5F,
                 showDefaultBackground = false,
                 headerHeight = 0,
                 footerHeight = 0,
@@ -324,35 +380,30 @@ namespace JLChnToZ.EditorExtensions {
 
         void OnListDrawElement(Rect rect, int index, bool isActive, bool isFocused) {
             var bone = bones[index];
-            ref var boneInfo = ref boneInfos[index];
             rect.y += EditorGUIUtility.standardVerticalSpacing;
+            var size = EditorGUIUtility.singleLineHeight;
             var rect2 = rect;
-            rect2.width -= EditorGUIUtility.singleLineHeight * 2;
-            rect2.height = EditorGUIUtility.singleLineHeight;
+            rect2.width -= size * 2;
+            rect2.height = size;
             var contentColor = GUI.contentColor;
-            if (boneInfo.coverage == 0) {
+            float coverage = boneInfos[index].coverage;
+            if (coverage == 0) {
                 var newContentColor = contentColor;
                 newContentColor.a *= 0.5F;
                 GUI.contentColor = newContentColor;
             }
             var iconRect = rect2;
             iconRect.x = rect2.xMin + EditorGUIUtility.labelWidth;
-            iconRect.width = 16;
-            rect2 = EditorGUI.PrefixLabel(rect2, GetGUIContent($"{index} ({boneInfo.refCount}, {boneInfo.coverage / totalCoverage:0.##%})"));
-            if (boneInfo.coverage <= 0) {
-                if (noWeightIcon == null)
-                    noWeightIcon = new GUIContent(EditorGUIUtility.IconContent("UnLinked")) {
-                        tooltip = "This bone has no weights. In most cases you can safely remove this bone reference.",
-                    };
-                iconRect.x -= iconRect.width;
-                GUI.Label(iconRect, noWeightIcon);
-            } else if (bone == null) {
-                if (notAssignedIcon == null)
-                    notAssignedIcon = new GUIContent(EditorGUIUtility.IconContent("Invalid")) {
-                        tooltip = "This bone is not assigned and it has weights. Parts of the mesh binded to this bone will breaks.",
-                    };
-                iconRect.x -= iconRect.width;
-                GUI.Label(iconRect, notAssignedIcon);
+            iconRect.width = size;
+            rect2 = EditorGUI.PrefixLabel(rect2, GetGUIContent(boneInfoStrings[index]));
+            if (coverage <= 0)
+                DrawIcon(ref iconRect, "This bone has no weights. In most cases you can safely remove this bone reference.", NO_WEIGHT_ICON);
+            else if (bone == null)
+                DrawIcon(ref iconRect, "This bone is not assigned and it has weights. Parts of the mesh binded to this bone will breaks.", MISSING_ICON);
+            else {
+                var rootBone = target.rootBone;
+                if (rootBone == null) rootBone = target.transform;
+                if (!bone.IsChildOf(rootBone)) DrawIcon(ref iconRect, "This bone is not under root bone. This is not recommend unless it is intentional.", WARN_ICON);
             }
             using (var changed = new EditorGUI.ChangeCheckScope()) {
                 bone = EditorGUI.ObjectField(rect2, bone, typeof(Transform), true) as Transform;
@@ -361,61 +412,49 @@ namespace JLChnToZ.EditorExtensions {
                     ApplyBones("Replace Bone Transform");
                 }
             }
-            iconRect = rect2;
-            iconRect.x = rect2.xMax - EditorGUIUtility.singleLineHeight - 4;
-            iconRect.width = EditorGUIUtility.singleLineHeight;
             if (bone != null) {
-                if (humanoidBones != null && humanoidBones.Contains(bone)) {
-                    if (avatarIcon == null)
-                        avatarIcon = new GUIContent(EditorGUIUtility.IconContent("Avatar Icon")) {
-                            tooltip = "This bone is a humanoid bone.",
-                        };
-                    iconRect.x -= iconRect.width;
-                    GUI.Label(iconRect, avatarIcon);
-                }
-                if (target.rootBone == bone) {
-                    if (rootIcon == null)
-                        rootIcon = new GUIContent(EditorGUIUtility.IconContent("AvatarPivot")) {
-                            tooltip = "This bone is the root bone.",
-                        };
-                    iconRect.x -= iconRect.width;
-                    GUI.Label(iconRect, rootIcon);
-                }
+                iconRect = new Rect(
+                    rect2.xMax - size - 4,
+                    rect2.y + 1,
+                    size - 2,
+                    size - 2
+                );
+                if (humanoidBones != null && humanoidBones.TryGetValue(bone, out int boneIndex))
+                    DrawIcon(ref iconRect, humanBoneNameTooltips[boneIndex], AVATAR_ICON);
+                if (target.rootBone == bone)
+                    DrawIcon(ref iconRect, "This is the root bone.", ROOT_ICON);
             }
             GUI.contentColor = contentColor;
             rect2.xMin = rect2.xMax + 2;
-            rect2.width = EditorGUIUtility.singleLineHeight;
+            rect2.width = size;
 #if UNITY_2021_2_OR_NEWER
             var iconButtonStyle = EditorStyles.iconButton;
 #else
             var iconButtonStyle = EditorStyles.label;
 #endif
-            if (GUI.Button(
-                rect2,
-                bone == null ?
-                GetGUIContent(tooltip: "Create new bone transform at bindpose.", iconContent: plusIcon) :
-                GetGUIContent(tooltip: "Try move bone transform to bindpose.", iconContent: filterIcon),
-                iconButtonStyle
-            )) {
-                AutoSetBone(index, true);
-                ApplyBones(bone == null ? "Create Bone Transform" : "Move Bone Transform", true);
+            if (bone == null) {
+                if (GUI.Button(rect2, GetGUIContent(null, "Create new bone transform at bindpose.", ADD_ICON), iconButtonStyle)) {
+                    AutoSetBone(index, true);
+                    ApplyBones("Create Bone Transform", true);
+                }
+            } else {
+                if (GUI.Button(rect2, GetGUIContent(null, "Try move bone transform to bindpose.", MOVE_ICON), iconButtonStyle)) {
+                    AutoSetBone(index, true);
+                    ApplyBones("Move Bone Transform", true);
+                }
             }
             rect2.x += 16;
             if (bone != null) {
                 bool isDuplicateName = !walkedNames.Add(bone.name);
                 bool isDuplicateBone = !walkedBones.Add(bone);
-                var rootBone = target.rootBone;
-                if (rootBone == null) rootBone = target.transform;
-                if (!bone.IsChildOf(rootBone))
-                    EditorGUI.LabelField(rect2, GetWarningContent(tooltip: "This bone is not under root bone. This is not recommend unless it is intentional."), EditorStyles.label);
-                else if (isDuplicateBone) {
-                    if (GUI.Button(rect2, GetInfoContent(tooltip: "This bone is duplicated. You may need to reassign a new bone in some cases."), iconButtonStyle) &&
+                if (isDuplicateBone) {
+                    if (GUI.Button(rect2, GetGUIContent(null, "This bone is duplicated. You may need to reassign a new bone in some cases.", INFO_ICON), iconButtonStyle) &&
                         EditorUtility.DisplayDialog("Reassign Bone", $"Reassign bone \"{bone.name}\"?", "Yes", "No")) {
                         ReassignBone(index);
                         ApplyBones("Replace Bone Transform");
                     }
                 } else if (isDuplicateName) {
-                    if (GUI.Button(rect2, GetInfoContent(tooltip: "This bone has the same name with another bone. You may need to rename it in some cases."), iconButtonStyle)) {
+                    if (GUI.Button(rect2, GetGUIContent(null, "This bone has the same name with another bone. You may need to rename it in some cases.", INFO_ICON), iconButtonStyle)) {
                         var newName = GetUniqueNameForBone(bone);
                         if (EditorUtility.DisplayDialog("Rename Bone", $"Rename bone \"{bone.name}\" to \"{newName}\"? This may break some animation clips.", "Rename", "Cancel")) {
                             Undo.RecordObject(bone.gameObject, "Rename Bone");
@@ -443,7 +482,8 @@ namespace JLChnToZ.EditorExtensions {
                 bone.SetParent(rootBone, false);
                 go.name = GetUniqueNameForBone(bone, rootBone);
                 ReplaceBone(index, bone);
-                offset = rootBone.localToWorldMatrix;
+                var parentBone = rootBone.parent;
+                offset = parentBone != null ? parentBone.localToWorldMatrix : Matrix4x4.identity;
             } else if (!move) return false;
             else if (bone == rootBone) {
                 var parentBone = bone.parent;
@@ -456,8 +496,10 @@ namespace JLChnToZ.EditorExtensions {
                     if (boneCoverageMap.ContainsKey(parentBone)) break;
                     parentBone = parentBone.parent;
                 }
-                if (parentBone == null) offset = rootBone.localToWorldMatrix;
-                else {
+                if (parentBone == null) {
+                    parentBone = rootBone.parent;
+                    offset = parentBone != null ? parentBone.localToWorldMatrix : Matrix4x4.identity;
+                } else {
                     int parentIndex = Array.LastIndexOf(bones, parentBone, index);
                     if (parentIndex < 0) parentIndex = Array.IndexOf(bones, parentBone, index);
                     offset = parentBone.localToWorldMatrix * bindposes[parentIndex];
@@ -493,8 +535,10 @@ namespace JLChnToZ.EditorExtensions {
                     }
                     so.ApplyModifiedProperties();
                 }
-                UpdateDirty(false);
-            } else UpdateDirty(true);
+                isDirty = false;
+            } else 
+                isDirty = true;
+            UpdateTitle();
             shouldRefreshBoneCoverageMap = true;
             if (isUndoGroup) {
                 if (!forced) Undo.SetCurrentGroupName(customUndoName);
@@ -521,26 +565,26 @@ namespace JLChnToZ.EditorExtensions {
 
         void SetBindpose() {
             walkedBones.Clear();
-            foreach (var i in GetSortedBoneIndecesByDepth())
-                if (bones[i] != null && !walkedBones.Add(bones[i])) AutoSetBone(i, true);
+            foreach (var i in bones.GetSortedIndices(new TransformComparer(TransformComparer.Mode.DepthFirst)))
+                if (bones[i] != null && walkedBones.Add(bones[i])) AutoSetBone(i, true);
             ApplyBones("Move Bones To Bindpose", true);
         }
 
         void ReassignDuplicatedBones() {
             walkedBones.Clear();
-            foreach (var i in GetSortedBoneIndecesByDepth())
-                if (bones[i] != null && !walkedBones.Add(bones[i])) ReassignBone(i);
+            foreach (var i in bones.GetSortedIndices(new TransformComparer(TransformComparer.Mode.DepthFirst)))
+                if (bones[i] != null && walkedBones.Add(bones[i])) ReassignBone(i);
             ApplyBones("Reassign Duplicated Bones", true);
         }
 
         void RenameDuplicatedBones() {
             walkedNames.Clear();
             walkedBones.Clear();
-            foreach (var i in GetSortedBoneIndecesByDepth()) {
+            foreach (var i in bones.GetSortedIndices(new TransformComparer(TransformComparer.Mode.DepthFirst))) {
                 var bone = bones[i];
-                if (bone == null || walkedBones.Add(bone)) continue;
+                if (bone == null || !walkedBones.Add(bone)) continue;
                 var name = bone.name;
-                if (walkedNames.Add(name)) continue;
+                if (!walkedNames.Add(name)) continue;
                 name = GetUniqueNameForBone(bone);
                 walkedNames.Add(name);
                 Undo.RecordObject(bone.gameObject, "Rename Bone");
@@ -552,6 +596,7 @@ namespace JLChnToZ.EditorExtensions {
         void EnablePoseMode() {
             if (poseModeState != null) return;
             poseModeState = new PoseModeState(target, bones);
+            UpdateTitle();
         }
 
         void ApplyPoseMode() {
@@ -582,38 +627,23 @@ namespace JLChnToZ.EditorExtensions {
                 poseModeState = null;
             }
             Undo.CollapseUndoOperations(Undo.GetCurrentGroup());
+            isDirty = false;
+            UpdateTitle();
         }
 
         void CancelPoseMode() {
             if (poseModeState == null) return;
             poseModeState.Dispose();
             poseModeState = null;
+            isDirty = false;
+            UpdateTitle();
         }
 
-        int[] GetSortedBoneIndecesByDepth() {
-            var depthMap = new Dictionary<Transform, int>();
-            foreach (var bone in bones) {
-                if (bone == null) continue;
-                var depth = 0;
-                var parent = bone.parent;
-                while (parent != null) {
-                    if (depthMap.TryGetValue(parent, out var parentDepth)) {
-                        depth = parentDepth + 1;
-                        break;
-                    }
-                    parent = parent.parent;
-                    depth++;
-                }
-                depthMap[bone] = depth;
-            }
-            var boneWithIndex = new (Transform t, int i)[bones.Length];
-            for (int i = 0; i < bones.Length; i++) boneWithIndex[i] = (bones[i], i);
-            Array.Sort(boneWithIndex, (l, r) => {
-                if (l.t == null || !depthMap.TryGetValue(l.t, out var lDepth)) lDepth = -1;
-                if (r.t == null || !depthMap.TryGetValue(r.t, out var rDepth)) rDepth = -1;
-                return lDepth != rDepth ? lDepth - rDepth : l.i - r.i;
-            });
-            return Array.ConvertAll(boneWithIndex, x => x.i);
+        Transform[] GetSortedBones() {
+            var sortedBones = new Transform[bones.Length];
+            Array.Copy(bones, sortedBones, bones.Length);
+            Array.Sort(sortedBones, new TransformComparer(TransformComparer.Mode.DepthFirst));
+            return sortedBones;
         }
 
         static Color GetBoneColor(Transform bone, Transform selection = null) {
@@ -636,22 +666,16 @@ namespace JLChnToZ.EditorExtensions {
             return result;
         }
 
-        static GUIContent GetGUIContent(string title = null, string tooltip = null, GUIContent iconContent = null) {
-            if (tempContent == null) tempContent = new GUIContent();
+        static void DrawIcon(ref Rect iconRect, string tooltip, string iconName) {
+            iconRect.x -= iconRect.width;
+            GUI.Label(iconRect, GetGUIContent(null, tooltip, iconName), EditorStyles.label);
+        }
+
+        static GUIContent GetGUIContent(string title = null, string tooltip = null, string iconName = null) {
             tempContent.text = title ?? string.Empty;
             tempContent.tooltip = tooltip ?? string.Empty;
-            tempContent.image = iconContent?.image;
+            tempContent.image = string.IsNullOrEmpty(iconName) ? null : EditorGUIUtility.IconContent(iconName).image;
             return tempContent;
-        }
-
-        static GUIContent GetWarningContent(string title = null, string tooltip = null) {
-            if (warningIcon == null) warningIcon = EditorGUIUtility.IconContent("console.warnicon.sml");
-            return GetGUIContent(title, tooltip, warningIcon);
-        }
-
-        static GUIContent GetInfoContent(string title = null, string tooltip = null) {
-            if (infoIcon == null) infoIcon = EditorGUIUtility.IconContent("console.infoicon.sml");
-            return GetGUIContent(title, tooltip, infoIcon);
         }
 
         string GetUniqueNameForBone(Transform bone, Transform parent = null) {
