@@ -96,10 +96,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
 
         void DrawCombineMeshTab() {
             EditorGUILayout.HelpBox(COMBINE_MESH_INFO, MessageType.Info);
-            sourceListScrollPos = EditorGUILayout.BeginScrollView(sourceListScrollPos);
-            sourceList.DoLayoutList();
-            GUILayout.FlexibleSpace();
-            EditorGUILayout.EndScrollView();
+            sourceList.DoScrollableLayoutList(ref sourceListScrollPos, GUILayout.ExpandHeight(true));
             EditorGUILayout.BeginHorizontal();
             EditorGUI.BeginChangeCheck();
             var newDestination = EditorGUILayout.ObjectField("Destination", destination, typeof(Renderer), true) as Renderer;

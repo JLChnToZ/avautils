@@ -214,12 +214,9 @@ namespace JLChnToZ.EditorExtensions {
                 EditorGUILayout.ObjectField(mesh, typeof(Mesh), false, GUILayout.Width(EditorGUIUtility.labelWidth + ReorderableList.Defaults.dragHandleWidth - 4));
                 EditorGUILayout.ObjectField(target, typeof(SkinnedMeshRenderer), true, forceExpandWidth);
             }
-            using (var scroll = new EditorGUILayout.ScrollViewScope(scrollPos)) {
-                scrollPos = scroll.scrollPosition;
-                walkedBones.Clear();
-                walkedNames.Clear();
-                list.DoLayoutList();
-            }
+            walkedBones.Clear();
+            walkedNames.Clear();
+            list.DoScrollableLayoutList(ref scrollPos);
             if (focusedWindow == this) selectedBone = list.index >= 0 ? bones[list.index] : null;
         }
 
@@ -297,7 +294,7 @@ namespace JLChnToZ.EditorExtensions {
                 var bone = bones[i];
                 if (bone == null) continue;
                 boneCoverageMap.TryGetValue(bone, out float coverage);
-                coverage += boneInfos[i].coverage;
+                coverage += (float)boneInfos[i].coverage;
                 boneCoverageMap[bone] = coverage;
                 actualBones[bone] = false;
                 maxCoverage = Mathf.Max(maxCoverage, coverage);
@@ -352,19 +349,16 @@ namespace JLChnToZ.EditorExtensions {
                 UpdateTitle();
             }
             boneInfos = new BoneCoverage[boneCount];
-            float totalCoverage = 0;
-            foreach (var boneWeight in mesh.GetAllBoneWeights()) {
-                totalCoverage += boneWeight.weight;
+            foreach (var boneWeight in mesh.GetAllBoneWeights())
                 boneInfos[boneWeight.boneIndex] += boneWeight.weight;
-            }
-            Debug.Assert(Mathf.Approximately(totalCoverage, mesh.vertexCount), $"Bone weight coverage {totalCoverage} != vertex count {mesh.vertexCount}", mesh);
             if (boneInfoStrings == null || boneInfoStrings.Length < boneInfos.Length)
                 boneInfoStrings = new string[boneInfos.Length];
+            double totalCoverage = mesh.vertexCount;
             for (int i = 0; i < boneInfos.Length; i++) {
                 ref var boneInfo = ref boneInfos[i];
                 boneInfoStrings[i] = $"{i} ({boneInfo.refCount}, {boneInfo.coverage / totalCoverage:0.##%})";
             }
-            list = new ReorderableList(bones, typeof(Transform), true, true, false, false) {
+            list = new ReorderableList(bones, typeof(Transform), true, false, false, false) {
                 drawElementCallback = OnListDrawElement,
                 drawHeaderCallback = DoNotDraw,
                 drawFooterCallback = DoNotDraw,
@@ -386,7 +380,7 @@ namespace JLChnToZ.EditorExtensions {
             rect2.width -= size * 2;
             rect2.height = size;
             var contentColor = GUI.contentColor;
-            float coverage = boneInfos[index].coverage;
+            double coverage = boneInfos[index].coverage;
             if (coverage == 0) {
                 var newContentColor = contentColor;
                 newContentColor.a *= 0.5F;
@@ -647,7 +641,7 @@ namespace JLChnToZ.EditorExtensions {
         }
 
         static Color GetBoneColor(Transform bone, Transform selection = null) {
-            bool hasReference = boneCoverageMap.TryGetValue(bone, out float coverage);
+            bool hasReference = boneCoverageMap.TryGetValue(bone, out var coverage);
             if (selection == null) selection = bone;
             else if (hasReference && boneCoverageMap.TryGetValue(selection, out var coverage2))
                 coverage = (coverage + coverage2) * 0.5F;
@@ -711,14 +705,14 @@ namespace JLChnToZ.EditorExtensions {
 
         readonly struct BoneCoverage {
             public readonly int refCount;
-            public readonly float coverage;
+            public readonly double coverage;
 
-            public BoneCoverage(int refCount, float coverage) {
+            public BoneCoverage(int refCount, double coverage) {
                 this.refCount = refCount;
                 this.coverage = coverage;
             }
 
-            public static BoneCoverage operator +(BoneCoverage a, float weight) =>
+            public static BoneCoverage operator +(BoneCoverage a, double weight) =>
                 new BoneCoverage(a.refCount + 1, a.coverage + weight);
         }
 
