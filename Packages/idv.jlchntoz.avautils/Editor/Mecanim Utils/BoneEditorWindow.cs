@@ -717,6 +717,7 @@ namespace JLChnToZ.EditorExtensions {
         }
 
         class PoseModeState : IDisposable {
+            static readonly Type[] previewTypes = new[] { typeof(MeshFilter), typeof(MeshRenderer) };
             readonly SkinnedMeshRenderer target;
             readonly GameObject targetObject;
             readonly Transform targetTransform;
@@ -724,6 +725,11 @@ namespace JLChnToZ.EditorExtensions {
             readonly Matrix4x4[] poses;
             readonly Mesh previewMesh;
             Mesh mesh;
+            GameObject previewObject;
+            MeshFilter previewMeshFilter;
+            MeshRenderer previewMeshRenderer;
+            bool renderingOff;
+            bool previewDirty;
 
             public Mesh TargetMesh => mesh;
 
@@ -745,8 +751,9 @@ namespace JLChnToZ.EditorExtensions {
                     hideFlags = HideFlags.HideAndDontSave,
                 };
                 target.BakeMesh(previewMesh, true);
-                target.forceRenderingOff = true;
-                SceneView.duringSceneGui += DrawPreview;
+                renderingOff = target.forceRenderingOff;
+                Camera.onPreCull += OnPreCull;
+                Camera.onPostRender += OnPostRender;
             }
 
             public bool Apply() {
@@ -771,23 +778,53 @@ namespace JLChnToZ.EditorExtensions {
                 return true;
             }
 
-            void DrawPreview(SceneView sceneView) {
-                if (previewMesh == null || !targetObject.activeInHierarchy || !target.enabled) return;
-                var materials = target.sharedMaterials;
-                var matrix = targetTransform.localToWorldMatrix;
-                var layer = targetObject.layer;
-                if (materials == null || materials.Length == 0) return;
-                for (int i = 0; i < materials.Length; i++) {
-                    var material = materials[i];
-                    if (material == null) continue;
-                    Graphics.DrawMesh(previewMesh, matrix, material, layer, sceneView.camera, i);
+            void OnPreCull(Camera cam) {
+                if (EditorApplication.isPlayingOrWillChangePlaymode) return;
+                ResetPreviewState();
+                if (previewObject == null) {
+                    previewObject = new GameObject("__PREVIEW__", previewTypes) {
+                        hideFlags = HideFlags.HideAndDontSave,
+                        layer = targetObject.layer,
+                    };
+                    previewObject.transform.SetParent(targetTransform, false);
                 }
+                if (previewMeshFilter != null || previewObject.TryGetComponent(out previewMeshFilter))
+                    previewMeshFilter.sharedMesh = previewMesh;
+                if (previewMeshRenderer != null || previewObject.TryGetComponent(out previewMeshRenderer)) {
+                    previewMeshRenderer.enabled = target.enabled;
+                    previewMeshRenderer.sharedMaterials = target.sharedMaterials;
+                    previewMeshRenderer.shadowCastingMode = target.shadowCastingMode;
+                    previewMeshRenderer.receiveShadows = target.receiveShadows;
+                    previewMeshRenderer.motionVectorGenerationMode = target.motionVectorGenerationMode;
+                    previewMeshRenderer.lightProbeUsage = target.lightProbeUsage;
+                    previewMeshRenderer.reflectionProbeUsage = target.reflectionProbeUsage;
+                    previewMeshRenderer.probeAnchor = target.probeAnchor;
+                    previewMeshRenderer.lightProbeProxyVolumeOverride = target.lightProbeProxyVolumeOverride;
+                    previewMeshRenderer.allowOcclusionWhenDynamic = target.allowOcclusionWhenDynamic;
+                    previewMeshRenderer.sortingLayerID = target.sortingLayerID;
+                    previewMeshRenderer.sortingOrder = target.sortingOrder;
+                    previewMeshRenderer.forceRenderingOff = false;
+                }
+                renderingOff = target.forceRenderingOff;
+                target.forceRenderingOff = true;
+                previewDirty = true;
+            }
+
+            void OnPostRender(Camera cam) => ResetPreviewState();
+
+            void ResetPreviewState() {
+                if (!previewDirty) return;
+                previewDirty = false;
+                if (previewMeshRenderer != null) previewMeshRenderer.forceRenderingOff = true;
+                target.forceRenderingOff = renderingOff;
             }
 
             public void Dispose() {
                 if (previewMesh != null) DestroyImmediate(previewMesh);
-                target.forceRenderingOff = false;
-                SceneView.duringSceneGui -= DrawPreview;
+                if (previewObject != null) DestroyImmediate(previewObject);
+                target.forceRenderingOff = renderingOff;
+                Camera.onPreCull -= OnPreCull;
+                Camera.onPostRender -= OnPostRender;
             }
         }
     }

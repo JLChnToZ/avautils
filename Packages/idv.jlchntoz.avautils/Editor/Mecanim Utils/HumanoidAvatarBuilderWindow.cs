@@ -11,8 +11,6 @@ namespace JLChnToZ.EditorExtensions {
     public class HumanoidAvatarBuilderWindow : EditorWindow {
         static readonly Vector3Int NullMuscleIndeces = new Vector3Int(-1, -1, -1);
         static GUIContent tempContent;
-        static bool[] requireBones;
-        static int[] parentBoneIndeces;
         static Vector3Int[] muscleIndeces;
         static HumanLimit[] defaultHumanLimits;
         dynamic boneRenderer;
@@ -130,6 +128,8 @@ namespace JLChnToZ.EditorExtensions {
                     }
                 var humanBoneNames = HumanBoneNames;
                 var muscleNames = MuscleNames;
+                var requireBones = RequiredBones;
+                var parentBoneIndeces = ParentBones;
                 for (int i = 0; i < boneMap.Length; i++) {
                     bool shouldOverride = false;
                     using (new EditorGUILayout.HorizontalScope()) {

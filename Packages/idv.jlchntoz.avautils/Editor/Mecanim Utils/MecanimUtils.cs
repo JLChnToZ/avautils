@@ -2,25 +2,35 @@ using System;
 using System.Reflection;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEditor;
 
 namespace JLChnToZ.EditorExtensions {
     public static class MecanimUtils {
         delegate Dictionary<int, Transform> MapBones(Transform root, Dictionary<Transform, bool> validBones);
         static string[] humanNames, muscleNames;
+        static int[] parentBones;
+        static bool[] requiredBones;
         static MapBones mapBones;
 
         public static string[] HumanBoneNames => humanNames;
 
         public static string[] MuscleNames => muscleNames;
 
-#if UNITY_EDITOR
-        [UnityEditor.InitializeOnLoadMethod]
-#else
-        [RuntimeInitializeOnLoadMethod]
-#endif
+        public static int[] ParentBones => parentBones;
+
+        public static bool[] RequiredBones => requiredBones;
+
+        [InitializeOnLoadMethod]
         static void Init() {
+            int boneCount = HumanTrait.BoneCount;
             humanNames = HumanTrait.BoneName;
             muscleNames = HumanTrait.MuscleName;
+            requiredBones = new bool[boneCount];
+            parentBones = new int[boneCount];
+            for (int i = 0; i < boneCount; i++) {
+                requiredBones[i] = HumanTrait.RequiredBone(i);
+                parentBones[i] = HumanTrait.GetParentBone(i);
+            }
             var type = Type.GetType("UnityEditor.AvatarAutoMapper, UnityEditor", false);
             if (type != null) {
                 var delegateType = typeof(MapBones);
@@ -94,7 +104,7 @@ namespace JLChnToZ.EditorExtensions {
                 if (boneNames[i] == null) continue;
                 int p = i;
                 while (true) {
-                    p = HumanTrait.GetParentBone(p);
+                    p = parentBones[p];
                     // Negative parent index means it is root.
                     if (p < 0) {
                         hw.Enqueue(root);
@@ -105,7 +115,7 @@ namespace JLChnToZ.EditorExtensions {
                         break;
                     }
                     // If it is a required bone and we can't find it, the hierarchy is already broken.
-                    if (HumanTrait.RequiredBone(p)) break;
+                    if (requiredBones[p]) break;
                 }
                 while (hw.TryDequeue(out var current)) {
                     if (boneNames[i] == current.name) {
