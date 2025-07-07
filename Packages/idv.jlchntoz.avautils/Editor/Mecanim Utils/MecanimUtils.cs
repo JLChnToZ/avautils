@@ -7,6 +7,7 @@ using UnityEditor;
 namespace JLChnToZ.EditorExtensions {
     public static class MecanimUtils {
         delegate Dictionary<int, Transform> MapBones(Transform root, Dictionary<Transform, bool> validBones);
+        static readonly FieldInfo parentNameField = typeof(SkeletonBone).GetField("parentName", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         static string[] humanNames, muscleNames;
         static int[] parentBones;
         static bool[] requiredBones;
@@ -19,6 +20,19 @@ namespace JLChnToZ.EditorExtensions {
         public static int[] ParentBones => parentBones;
 
         public static bool[] RequiredBones => requiredBones;
+
+        public static readonly HumanDescription defaultHumanDescription = new() {
+            human = Array.Empty<HumanBone>(),
+            skeleton = Array.Empty<SkeletonBone>(),
+            armStretch = 0.05F,
+            upperArmTwist = 0.5F,
+            lowerArmTwist = 0.5F,
+            legStretch = 0.05F,
+            lowerLegTwist = 0.5F,
+            upperLegTwist = 0.5F,
+            feetSpacing = 0.0F,
+            hasTranslationDoF = false,
+        };
 
         [InitializeOnLoadMethod]
         static void Init() {
@@ -133,6 +147,66 @@ namespace JLChnToZ.EditorExtensions {
             var result = new Transform[HumanTrait.BoneCount];
             FetchHumanoidBodyBones(avatar, root, result, new());
             return result;
+        }
+
+        public static HumanDescription GetHumanDescriptionOrDefault(this Avatar avatar) =>
+            avatar == null ? defaultHumanDescription : avatar.humanDescription;
+
+        public static void ApplyTPose(this Animator animator, bool humanBoneOnly = true, bool applyScale = true, bool undo = false) {
+            if (animator == null) return;
+            ApplyTPose(animator.avatar, animator.transform, humanBoneOnly, applyScale, undo);
+        }
+
+        public static void ApplyTPose(this Avatar avatar, Transform root, bool humanBoneOnly = true, bool applyScale = true, bool undo = false) {
+            if (undo && EditorApplication.isPlayingOrWillChangePlaymode) undo = false;
+            if (avatar == null || root == null) return;
+            var walker = new Queue<Transform>();
+            HashSet<Transform> whiteList = null;
+            Transform hips = null;
+            if (humanBoneOnly && avatar.isHuman) {
+                var bones = new Transform[HumanTrait.BoneCount];
+                FetchHumanoidBodyBones(avatar, root, bones, walker);
+                hips = bones[0];
+                whiteList = new HashSet<Transform>(bones.Length);
+                foreach (var bone in bones)
+                    if (bone != null)
+                        whiteList.Add(bone);
+            }
+            var humanDesc = avatar.humanDescription;
+            var skeletonMapping = new Dictionary<(string bone, string parent), SkeletonBone>();
+            string rootBoneName = null;
+            for (int i = 0; i < humanDesc.skeleton.Length; i++) {
+                var skeleton = humanDesc.skeleton[i];
+                if (string.IsNullOrEmpty(skeleton.name)) continue;
+                var parentName = parentNameField.GetValue(skeleton) as string;
+                if (i == 0)
+                    rootBoneName = skeleton.name;
+                else if (rootBoneName != null && rootBoneName == parentName)
+                    parentName = null;
+                skeletonMapping[(skeleton.name, parentName ?? "")] = skeleton;
+            }
+            foreach (Transform child in root) walker.Enqueue(child);
+            while (walker.TryDequeue(out var current)) {
+                foreach (Transform child in current) walker.Enqueue(child);
+                if ((whiteList != null && !whiteList.Contains(current)) ||
+                    !(skeletonMapping.TryGetValue((current.name, current.parent.name), out var skeletonBone) ||
+                    skeletonMapping.TryGetValue((current.name, ""), out skeletonBone)))
+                    continue;
+                if (undo) Undo.RecordObject(current, "Apply T-Pose");
+                current.SetLocalPositionAndRotation(skeletonBone.position, skeletonBone.rotation);
+                if (applyScale) current.localScale = skeletonBone.scale;
+            }
+            if (hips != null) {
+                var trs = Matrix4x4.identity;
+                for (var current = hips; current != null && current != root; current = current.parent)
+                    if (skeletonMapping.TryGetValue((current.name, current.parent.name), out var skeletonBone) ||
+                        skeletonMapping.TryGetValue((current.name, ""), out skeletonBone))
+                        trs = Matrix4x4.TRS(skeletonBone.position, skeletonBone.rotation, skeletonBone.scale) * trs;
+                trs = hips.parent.worldToLocalMatrix * root.localToWorldMatrix * trs;
+                hips.SetLocalPositionAndRotation(trs.GetPosition(), trs.rotation);
+                if (applyScale) hips.localScale = trs.lossyScale;
+            }
+            if (undo) Undo.CollapseUndoOperations(Undo.GetCurrentGroup());
         }
     }
 }
